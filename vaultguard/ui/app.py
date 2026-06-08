@@ -342,8 +342,30 @@ class VaultGuardApp:
         self.content.content = control
         self.page.update()
 
+    def _open_overlay(self, control) -> None:
+        if hasattr(self.page, "open"):
+            self.page.open(control)
+            return
+
+        if isinstance(control, ft.SnackBar):
+            self.page.snack_bar = control
+        elif isinstance(control, ft.AlertDialog):
+            self.page.dialog = control
+        else:
+            self.page.overlay.append(control)
+        control.open = True
+        self.page.update()
+
+    def _close_overlay(self, control) -> None:
+        if hasattr(self.page, "close"):
+            self.page.close(control)
+            return
+
+        control.open = False
+        self.page.update()
+
     def _snack(self, msg: str, error: bool = False) -> None:
-        self.page.open(
+        self._open_overlay(
             ft.SnackBar(
                 ft.Text(msg, color=T.BG, weight=T.FW_MEDIUM),
                 bgcolor=T.DANGER if error else T.SUCCESS,
@@ -584,12 +606,12 @@ class VaultGuardApp:
     def _show_resume_dialog(self, task_id: int, undone: int,
                             src: str, dst: str) -> None:
         def cont(e):
-            self.page.close(dlg)
+            self._close_overlay(dlg)
             self.current_task_id = task_id
             self._start_execution(src, dst, resume=True)
 
         def fresh(e):
-            self.page.close(dlg)
+            self._close_overlay(dlg)
             self._run_compare(src, dst)
 
         dlg = ft.AlertDialog(
@@ -608,7 +630,7 @@ class VaultGuardApp:
                                 on_click=cont),
             ],
         )
-        self.page.open(dlg)
+        self._open_overlay(dlg)
 
     # ========== 确认页 ==========
     # 排序维度：键 -> (标签, 取值函数, 默认是否升序)
@@ -1229,9 +1251,9 @@ class VaultGuardApp:
             content=content,
             shape=ft.RoundedRectangleBorder(radius=T.RADIUS_MD),
             actions=[_default_button(
-                "关闭", on_click=lambda e: self.page.close(dlg))],
+                "关闭", on_click=lambda e: self._close_overlay(dlg))],
         )
-        self.page.open(dlg)
+        self._open_overlay(dlg)
 
     # ========== 设置页 ==========
     def _show_settings(self) -> None:
