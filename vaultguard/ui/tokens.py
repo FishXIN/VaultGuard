@@ -1,7 +1,7 @@
-"""VaultGuard 设计系统在 Flet 桌面端的 Token 映射。
+"""VaultGuard 设计系统在桌面端的 Token 映射。
 
 来源：VaultGuard-Design-System.md（v2.0 · 火山引擎 / Arco 极简风）。
-由于 Flet 不支持 CSS Variables，这里把规范中的 token 转成 Flet/Python 可消费的常量，
+由于桌面端不支持 CSS Variables，这里把规范中的 token 转成 Python 可消费的常量，
 保持名称一致，便于跨端比对。
 
 设计基准：黑白灰为主、单一克制蓝、小圆角（4–6px）、极轻阴影（仅浮层）、零多余特效。
@@ -101,7 +101,7 @@ HEADER_H = 56
 
 
 # ============ 6. 动效（极简）============
-# Flet 的 ft.Animation 单位是毫秒
+# ft.Animation 单位是毫秒
 DUR_FAST = 150  # hover / 颜色过渡
 DUR_BASE = 250  # 弹窗 / 抽屉出现
 

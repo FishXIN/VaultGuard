@@ -8,11 +8,11 @@ bundle 声明支持哪些本地化」，而不是 AppleLanguages 环境变量。
 恒为 en，面板 chrome 会一直是英文。必须让发起请求的进程的 main bundle 就是
 已在 Info.plist 中声明了 zh-Hans 的 VaultGuard.app，面板才会跟随系统显示中文。
 
-同时 NSOpenPanel 必须运行在拥有 Cocoa runloop 的进程主线程上，而 Flet 的事件
+同时 NSOpenPanel 必须运行在拥有 Cocoa runloop 的进程主线程上，而 UI 事件
 回调跑在工作线程中，直接调用 runModal() 会触发 AppKit 线程安全违例，导致卡顿
 甚至闪退。为此把面板放进一个 VaultGuard 自身的子进程运行：该子进程的 main
 bundle 即 VaultGuard.app（声明了中文本地化），拥有干净的主线程与自己的
-NSApplication；并设为 accessory 激活策略，不在 Dock 多出图标、不开 Flet 窗口，
+NSApplication；并设为 accessory 激活策略，不在 Dock 多出图标、不开主窗口，
 只弹出原生面板本身。弹窗结束后把选中路径写到 stdout 再退出。
 """
 from __future__ import annotations
@@ -29,7 +29,7 @@ _MARKER = "VGPATH:"
 def run_picker_process() -> None:
     """子进程入口：弹出 NSOpenPanel，把选中路径写到 stdout 后退出。
 
-    该函数不导入 flet，确保子进程启动尽量快、且不创建任何 Flet 窗口。
+    该函数不导入桌面 UI 运行时，确保子进程启动尽量快、且不创建任何主窗口。
     """
     title = os.environ.get("VAULTGUARD_DIR_PICKER_TITLE", "选择目录")
     try:
@@ -69,7 +69,7 @@ def pick_directory(title: str) -> Optional[str]:
     env = dict(os.environ)
     env["VAULTGUARD_DIR_PICKER"] = "1"
     env["VAULTGUARD_DIR_PICKER_TITLE"] = title
-    # 子进程不应继承内置客户端路径，避免误启 Flet 窗口。
+    # 子进程不应继承内置客户端路径，避免误启主窗口。
     env.pop("FLET_VIEW_PATH", None)
 
     if getattr(sys, "frozen", False):

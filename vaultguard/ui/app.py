@@ -1,4 +1,4 @@
-"""VaultGuard Flet 图形界面（模块 5 + 6）。
+"""VaultGuard 桌面图形界面（模块 5 + 6）。
 
 视觉与交互严格遵循 VaultGuard-Design-System.md（v2.0 · 火山引擎 / Arco 极简风）：
 - 色彩：黑白灰为主（≈90%）+ 单一克制蓝 #165DFF（≈8%）+ 低饱和状态色（<2%）
@@ -11,6 +11,7 @@
 """
 from __future__ import annotations
 
+import asyncio
 import threading
 import time
 from pathlib import Path
@@ -237,7 +238,7 @@ class VaultGuardApp:
     def _build_layout(self) -> None:
         # 左侧固定侧边导航（宽 200px，选中项左侧 2px 蓝条 + 浅蓝底 + 蓝色文字）
         nav_defs = [
-            (ft.Icons.HOME_OUTLINED, "主页"),
+            (ft.Icons.HOME_OUTLINED, "任务"),
             (ft.Icons.HISTORY_OUTLINED, "历史"),
             (ft.Icons.SETTINGS_OUTLINED, "设置"),
         ]
@@ -425,7 +426,7 @@ class VaultGuardApp:
         return b
 
     def _pick_dir(self, is_source: bool) -> None:
-        # 通过 VaultGuard 自身的独立子进程运行原生 NSOpenPanel：既避免在 Flet
+        # 通过 VaultGuard 自身的独立子进程运行原生 NSOpenPanel：既避免在 UI
         # 工作线程里直接碰 AppKit 导致卡顿/闪退，又让发起面板请求的进程 main
         # bundle 是已声明中文本地化的 VaultGuard.app，使系统面板显示中文。
         prompt = "选择源目录" if is_source else "选择目标目录"
@@ -521,18 +522,21 @@ class VaultGuardApp:
             # 仅写入最新快照，绝不在采集线程触碰 UI / page.update()
             self._latest_compare_prog = prog
 
-        def refresher():
-            # 固定 ~15fps 节流刷新：把最新快照渲染到 UI，统一重绘一次
+        async def refresher():
+            # 刷新协程跑在 page 的事件循环上：page.update() 在 loop 线程内执行，
+            # put_nowait 能正常唤醒发送队列消费者，从而真正 flush 到客户端。
+            # 固定 ~15fps 节流，避免高频更新冲垮 UI 管线。
             while self._compare_refreshing:
                 self._render_compare_snapshot()
-                time.sleep(1 / 15)
+                await asyncio.sleep(1 / 15)
             # 退出前补最后一帧，确保最终状态落地
             self._render_compare_snapshot()
 
         def work():
             self._latest_compare_prog = None
             self._compare_refreshing = True
-            threading.Thread(target=refresher, daemon=True).start()
+            # 在事件循环上启动刷新协程（关键：不能用裸线程，否则 update 不 flush）
+            self.page.run_task(refresher)
             try:
                 diff = self.svc.compare(src, dst, progress_cb=progress_cb)
                 self.current_diff = diff
@@ -610,7 +614,7 @@ class VaultGuardApp:
     # 排序维度：键 -> (标签, 取值函数, 默认是否升序)
     _CF_SORT_DEFS = [
         ("name", "名称", lambda it: it.rel_path.lower(), True),
-        ("size", "大小", lambda it: it.size, False),
+        ("size", "文件容量", lambda it: it.size, False),
         ("type", "类型", lambda it: Path(it.rel_path).suffix.lower(), True),
         ("date", "日期", lambda it: it.src_mtime, False),
     ]
@@ -1091,7 +1095,7 @@ class VaultGuardApp:
                 kv("传输", fmt_size(prog.transferred_bytes)),
                 ft.Container(height=T.SP_2),
                 ft.Row([
-                    _default_button("返回主页",
+                    _default_button("返回任务",
                                     icon=ft.Icons.HOME_OUTLINED,
                                     on_click=lambda e: self._goto_home()),
                     _primary_button("查看历史",
@@ -1250,7 +1254,7 @@ class VaultGuardApp:
             width=220, dense=True,
             keyboard_type=ft.KeyboardType.NUMBER)
         self.f_compare_size = ft.Switch(
-            label="对比文件大小", value=s.compare_size,
+            label="检测文件容量变化", value=s.compare_size,
             active_color=T.PRIMARY)
         self.f_verify_hash = ft.Switch(
             label="Hash 校验",
@@ -1343,7 +1347,7 @@ def run() -> None:
     import os
     import sys
 
-    # 子进程模式：仅弹出原生目录选择器后退出，不启动 Flet 窗口。
+    # 子进程模式：仅弹出原生目录选择器后退出，不启动主窗口。
     # 该子进程的 main bundle 即 VaultGuard.app（已声明中文本地化），系统
     # 原生面板会跟随系统语言显示中文。
     if os.environ.get("VAULTGUARD_DIR_PICKER") == "1":

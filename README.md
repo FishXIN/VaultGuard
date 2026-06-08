@@ -1,6 +1,6 @@
 # VaultGuard · 本地硬盘增量备份
 
-以「文件安全」为最高优先级的本地硬盘增量备份工具（Windows / macOS）。基于 **Python + Flet** 构建。
+以「文件安全」为最高优先级的本地硬盘增量备份工具（Windows / macOS）。提供原生桌面应用体验。
 
 通过对比文件修改时间识别需备份文件，**先选清单、确认后再执行**，已备份且未变更的文件自动跳过；支持断点续传，全程可视化进度与完整日志。
 
@@ -51,7 +51,7 @@ VaultGuard/
 │   │   ├── executor.py      # 模块2+3：原子复制 + 断点续传
 │   │   ├── database.py      # 模块4：SQLite 日志/任务持久化
 │   │   └── service.py       # 服务层（编排 CLI/GUI 共用）
-│   └── ui/                  # 模块5+6：Flet 图形界面
+│   └── ui/                  # 模块5+6：VaultGuard 桌面图形界面
 │       ├── app.py
 │       └── helpers.py
 └── tests/
