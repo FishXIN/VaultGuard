@@ -1,0 +1,20 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+
+# 数据/日志/构建产物
+build/
+dist/
+*.spec
+*.db
+*.db-wal
+*.db-shm
+logs/
+
+# 系统
+.DS_Store
+Thumbs.db
