@@ -14,15 +14,79 @@ from __future__ import annotations
 import asyncio
 import threading
 import time
+import webbrowser
 from pathlib import Path
-from typing import Optional
-
-import flet as ft
+from typing import Callable, Optional
 
 from vaultguard.core.models import CompareProgress, CopyProgress, DiffResult
 from vaultguard.core.service import BackupService
 from . import tokens as T
+from .error_reporter import ErrorReporter
 from .helpers import fmt_eta, fmt_size, fmt_time
+from .runtime import VIEW_PATH_ENV, ft
+
+
+# ============ 侧边导航图标（内联 assets/Icon 下的 SVG，随模块自包含） ============
+# 设计稿描边色固定为 #0B0B0F，运行时通过 ft.Image 的 SRC_IN 着色为选中/未选中色。
+_NAV_SVG_TASK = (
+    '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" '
+    'xmlns="http://www.w3.org/2000/svg">'
+    '<path d="M2 3.99998L2.9 4.89998L4.5 3.09998" stroke="#0B0B0F" '
+    'stroke-linecap="round" stroke-linejoin="round"/>'
+    '<path d="M2 7.99998L2.9 8.89998L4.5 7.09998" stroke="#0B0B0F" '
+    'stroke-linecap="round" stroke-linejoin="round"/>'
+    '<path d="M2 12L2.9 12.9L4.5 11.1" stroke="#0B0B0F" '
+    'stroke-linecap="round" stroke-linejoin="round"/>'
+    '<path d="M6.5 4H14" stroke="#0B0B0F" stroke-linecap="round"/>'
+    '<path d="M6.5 8H14" stroke="#0B0B0F" stroke-linecap="round"/>'
+    '<path d="M6.5 12H14" stroke="#0B0B0F" stroke-linecap="round"/>'
+    '</svg>'
+)
+_NAV_SVG_HISTORY = (
+    '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" '
+    'xmlns="http://www.w3.org/2000/svg">'
+    '<path d="M11.5 4.20001H12.4C12.96 4.20001 13.2 4.44001 13.2 5.00001V12.6C13.2 '
+    '13.16 12.96 13.4 12.4 13.4H6.59999C6.03999 13.4 5.79999 13.16 5.79999 '
+    '12.6V12.2" stroke="#0B0B0F" stroke-linecap="round" stroke-linejoin="round"/>'
+    '<path d="M3.59999 3H8.69999L10.2 4.5V10.6C10.2 11.16 9.95999 11.4 9.39999 '
+    '11.4H3.59999C3.03999 11.4 2.79999 11.16 2.79999 10.6V3.8C2.79999 3.24 3.03999 '
+    '3 3.59999 3Z" stroke="#0B0B0F" stroke-linecap="round" stroke-linejoin="round"/>'
+    '<path d="M4.70001 6.20001H8.30001M4.70001 8.40001H8.30001" stroke="#0B0B0F" '
+    'stroke-linecap="round"/>'
+    '</svg>'
+)
+_NAV_SVG_SETTING = (
+    '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" '
+    'xmlns="http://www.w3.org/2000/svg">'
+    '<path d="M6.68316 3.5C6.76316 3.2 7.03316 3 7.34316 3H8.62316C8.93316 3 9.20316 '
+    '3.2 9.28316 3.5L9.53316 4.48C9.88316 4.6 10.2132 4.79 10.5032 5.02L11.4732 '
+    '4.74C11.7632 4.66 12.0832 4.78 12.2332 5.05L12.8732 6.16C13.0332 6.43 12.9832 '
+    '6.76 12.7532 6.97L12.0232 7.66C12.0532 7.84 12.0632 8.02 12.0632 8.2C12.0632 '
+    '8.38 12.0532 8.56 12.0232 8.74L12.7532 9.43C12.9832 9.64 13.0332 9.97 12.8732 '
+    '10.24L12.2332 11.35C12.0832 11.62 11.7632 11.74 11.4732 11.66L10.5032 '
+    '11.38C10.2132 11.61 9.88316 11.8 9.53316 11.92L9.28316 12.9C9.20316 13.2 '
+    '8.93316 13.4 8.62316 13.4H7.34316C7.03316 13.4 6.76316 13.2 6.68316 '
+    '12.9L6.43316 11.92C6.08316 11.8 5.75316 11.61 5.46316 11.38L4.49316 '
+    '11.66C4.20316 11.74 3.88316 11.62 3.73316 11.35L3.09316 10.24C2.93316 9.97 '
+    '2.98316 9.64 3.21316 9.43L3.94316 8.74C3.91316 8.56 3.90316 8.38 3.90316 '
+    '8.2C3.90316 8.02 3.91316 7.84 3.94316 7.66L3.21316 6.97C2.98316 6.76 2.93316 '
+    '6.43 3.09316 6.16L3.73316 5.05C3.88316 4.78 4.20316 4.66 4.49316 4.74L5.46316 '
+    '5.02C5.75316 4.79 6.08316 4.6 6.43316 4.48L6.68316 3.5Z" stroke="#0B0B0F" '
+    'stroke-linejoin="round"/>'
+    '<path d="M7.98314 9.9C8.92203 9.9 9.68314 9.13888 9.68314 8.2C9.68314 7.26112 '
+    '8.92203 6.5 7.98314 6.5C7.04426 6.5 6.28314 7.26112 6.28314 8.2C6.28314 9.13888 '
+    '7.04426 9.9 7.98314 9.9Z" stroke="#0B0B0F" stroke-linejoin="round"/>'
+    '</svg>'
+)
+
+
+def _nav_svg_icon(svg: str, color: str, size: int = 18) -> "ft.Image":
+    """把内联 SVG 渲染为指定颜色的图标（SRC_IN 将描边整体着色）。"""
+    return ft.Image(
+        src=svg, width=size, height=size,
+        color=color, color_blend_mode=ft.BlendMode.SRC_IN,
+        fit=ft.BoxFit.CONTAIN,
+    )
 
 
 # ============ 通用 UI 工厂 ============
@@ -78,8 +142,11 @@ def _primary_button(text: str, icon=None, on_click=None,
     def _hover(e: ft.HoverEvent) -> None:
         if disabled:
             return
-        btn.bgcolor = T.PRIMARY_HOVER if e.data == "true" else T.PRIMARY
-        btn.update()
+        try:
+            btn.bgcolor = T.PRIMARY_HOVER if e.data == "true" else T.PRIMARY
+            btn.update()
+        except Exception:
+            pass
 
     if not disabled:
         btn.on_hover = _hover
@@ -87,13 +154,16 @@ def _primary_button(text: str, icon=None, on_click=None,
 
 
 def _default_button(text: str, icon=None, on_click=None,
-                    danger: bool = False) -> ft.Container:
+                    danger: bool = False, disabled: bool = False,
+                    tooltip: Optional[str] = None) -> ft.Container:
     """次按钮：描边（规范 §5.1 .vg-btn--default）。
 
     hover 仅变边框/文字色为主色；danger 变体用危险色描边。
     """
-    base_color = T.DANGER if danger else T.TEXT_PRIMARY
-    base_border = T.DANGER if danger else T.BORDER
+    base_color = T.TEXT_DISABLED if disabled else (
+        T.DANGER if danger else T.TEXT_PRIMARY)
+    base_border = T.BORDER_LIGHT if disabled else (
+        T.DANGER if danger else T.BORDER)
     hover_color = T.DANGER if danger else T.PRIMARY
 
     label = ft.Text(text, color=base_color, size=T.TEXT_14, weight=T.FW_MEDIUM)
@@ -115,21 +185,28 @@ def _default_button(text: str, icon=None, on_click=None,
         height=32,
         alignment=ft.Alignment.CENTER,
         animate=ft.Animation(T.DUR_FAST, T.EASE),
-        on_click=on_click,
+        on_click=None if disabled else on_click,
+        tooltip=tooltip,
         ink=False,
     )
 
     def _hover(e: ft.HoverEvent) -> None:
-        on = e.data == "true"
-        col = hover_color if on else base_color
-        bdr = hover_color if on else base_border
-        btn.border = ft.Border.all(1, bdr)
-        label.color = col
-        if icon_ctrl is not None:
-            icon_ctrl.color = col
-        btn.update()
+        if disabled:
+            return
+        try:
+            on = e.data == "true"
+            col = hover_color if on else base_color
+            bdr = hover_color if on else base_border
+            btn.border = ft.Border.all(1, bdr)
+            label.color = col
+            if icon_ctrl is not None:
+                icon_ctrl.color = col
+            btn.update()
+        except Exception:
+            pass
 
-    btn.on_hover = _hover
+    if not disabled:
+        btn.on_hover = _hover
     return btn
 
 
@@ -201,6 +278,7 @@ class VaultGuardApp:
     def __init__(self, page: ft.Page) -> None:
         self.page = page
         self.svc = BackupService()
+        self.error_reporter = ErrorReporter(self.svc.data_dir)
         self.executor = None
         self.current_diff: Optional[DiffResult] = None
         self.current_task_id: Optional[int] = None
@@ -209,14 +287,19 @@ class VaultGuardApp:
         self._running = False
         self._nav_index = 0
         self._nav_items: list[ft.Container] = []
+        self._task_stage = "home"
+        self._task_content = None
         self._compare_started_at = 0.0
         # 数据采集与界面刷新解耦：扫描线程只写快照，由独立节流线程统一重绘
         self._latest_compare_prog: Optional[CompareProgress] = None
         self._compare_refreshing = False
+        self._latest_copy_prog: Optional[CopyProgress] = None
+        self._copy_refreshing = False
+        self._last_log_file = ""
 
         self._setup_page()
         self._build_layout()
-        self._show_home()
+        self._reset_task_home()
 
     # ---------- 页面基础 ----------
     def _setup_page(self) -> None:
@@ -238,9 +321,9 @@ class VaultGuardApp:
     def _build_layout(self) -> None:
         # 左侧固定侧边导航（宽 200px，选中项左侧 2px 蓝条 + 浅蓝底 + 蓝色文字）
         nav_defs = [
-            (ft.Icons.HOME_OUTLINED, "任务"),
-            (ft.Icons.HISTORY_OUTLINED, "历史"),
-            (ft.Icons.SETTINGS_OUTLINED, "设置"),
+            (_NAV_SVG_TASK, "任务"),
+            (_NAV_SVG_HISTORY, "历史"),
+            (_NAV_SVG_SETTING, "设置"),
         ]
         self._nav_items = []
         for idx, (icon, label) in enumerate(nav_defs):
@@ -289,7 +372,7 @@ class VaultGuardApp:
         fg = T.PRIMARY if active else T.TEXT_PRIMARY
         item = ft.Container(
             content=ft.Row([
-                ft.Icon(icon, color=fg, size=18),
+                _nav_svg_icon(icon, fg, 18),
                 ft.Text(label, size=T.TEXT_14, weight=T.FW_MEDIUM, color=fg),
             ], spacing=T.SP_3, tight=True),
             height=40,
@@ -301,16 +384,19 @@ class VaultGuardApp:
             border_radius=T.RADIUS,
             alignment=ft.Alignment.CENTER_LEFT,
             animate=ft.Animation(T.DUR_FAST, T.EASE),
-            on_click=lambda e, i=idx: self._on_nav_click(i),
+            on_click=self._safe(label, lambda e, i=idx: self._on_nav_click(i)),
         )
         item.data = (idx, icon, label)
 
         def _hover(e: ft.HoverEvent, c=item) -> None:
-            i = c.data[0]
-            if i == self._nav_index:
-                return
-            c.bgcolor = T.FILL if e.data == "true" else None
-            c.update()
+            try:
+                i = c.data[0]
+                if i == self._nav_index:
+                    return
+                c.bgcolor = T.FILL if e.data == "true" else None
+                c.update()
+            except Exception:
+                pass
 
         item.on_hover = _hover
         return item
@@ -332,7 +418,7 @@ class VaultGuardApp:
         self._nav_index = idx
         self._refresh_nav()
         if idx == 0:
-            self._show_home()
+            self._show_task()
         elif idx == 1:
             self._show_history()
         elif idx == 2:
@@ -342,10 +428,143 @@ class VaultGuardApp:
         self.content.content = control
         self.page.update()
 
-    def _open_overlay(self, control) -> None:
-        if hasattr(self.page, "open"):
-            self.page.open(control)
+    def _set_task_content(self, control) -> None:
+        self._task_content = control
+        if self._nav_index == 0:
+            self._set_content(control)
+
+    def _show_task(self) -> None:
+        if self._task_content is None:
+            self._show_home()
             return
+        self._set_content(self._task_content)
+
+    def _reset_task_home(self) -> None:
+        self.current_diff = None
+        self._task_stage = "home"
+        self._show_home()
+
+    def _run_ui(self, fn: Callable[[], None]) -> None:
+        async def runner():
+            try:
+                fn()
+            except Exception as ex:  # noqa: BLE001
+                report = self._record_error("UI 执行失败", ex)
+                try:
+                    self._show_error_dialog(report)
+                except Exception as inner:  # noqa: BLE001
+                    self._record_error("错误弹窗展示失败", inner)
+
+        try:
+            if hasattr(self.page, "run_task"):
+                self.page.run_task(runner)
+            else:
+                fn()
+        except Exception as ex:  # noqa: BLE001
+            self._record_error("UI 调度失败", ex)
+
+    def _start_refresher(self, refresher: Callable, context: str) -> None:
+        async def guarded_refresher():
+            try:
+                await refresher()
+            except Exception as ex:  # noqa: BLE001
+                self._handle_error(context, ex)
+
+        try:
+            if hasattr(self.page, "run_task"):
+                self.page.run_task(guarded_refresher)
+            else:
+                raise RuntimeError("当前 VaultGuard 桌面运行时缺少 page.run_task")
+        except Exception as ex:  # noqa: BLE001
+            self._handle_error(context, ex)
+
+    def _safe(self, context: str, fn: Callable) -> Callable:
+        def wrapper(e=None):
+            try:
+                return fn(e)
+            except Exception as ex:  # noqa: BLE001
+                self._handle_error(context, ex)
+                return None
+
+        return wrapper
+
+    def _record_error(self, context: str, exc: BaseException) -> dict:
+        try:
+            return self.error_reporter.record_exception(context, exc)
+        except Exception:  # noqa: BLE001
+            return {
+                "context": context,
+                "type": type(exc).__name__,
+                "message": str(exc),
+                "traceback": "",
+            }
+
+    def _handle_error(self, context: str, exc: BaseException) -> None:
+        report = self._record_error(context, exc)
+        self._run_ui(lambda: self._show_error_dialog(report))
+
+    def _show_error_dialog(self, report: dict) -> None:
+        title = report.get("type", "UnknownError")
+        message = report.get("message", "")
+        content = ft.Container(
+            width=620,
+            content=ft.Column([
+                ft.Text("操作没有继续执行，错误内容已记录到本地。",
+                        size=T.TEXT_14, color=T.TEXT_PRIMARY),
+                ft.Text(f"场景：{report.get('context', '')}",
+                        size=T.TEXT_13, color=T.TEXT_PRIMARY),
+                ft.Text(f"类型：{title}",
+                        size=T.TEXT_13, color=T.DANGER,
+                        font_family=T.FONT_MONO),
+                ft.Text(f"内容：{message or '(无详细信息)'}",
+                        size=T.TEXT_13, color=T.TEXT_PRIMARY,
+                        selectable=True),
+                _muted_text(f"报告目录：{self.error_reporter.report_dir}",
+                            size=T.TEXT_12),
+            ], spacing=T.SP_2, tight=True),
+        )
+        dlg = ft.AlertDialog(
+            modal=True,
+            title=ft.Text("检测到错误",
+                          weight=T.FW_MEDIUM, size=T.TEXT_16, color=T.TEXT_TITLE),
+            content=content,
+            shape=ft.RoundedRectangleBorder(radius=T.RADIUS_MD),
+            actions=[
+                _default_button("关闭",
+                                on_click=self._safe(
+                                    "关闭错误弹窗",
+                                    lambda e: self._close_overlay(dlg))),
+                _primary_button("发送反馈",
+                                icon=ft.Icons.EMAIL_OUTLINED,
+                                on_click=self._safe(
+                                    "发送错误反馈",
+                                    lambda e: self._send_error_report(report))),
+            ],
+        )
+        self._open_overlay(dlg)
+
+    def _send_error_report(self, report: Optional[dict] = None) -> None:
+        report = report or self.error_reporter.load_latest()
+        if not report:
+            self._snack("暂无可发送的错误报告", error=True)
+            return
+        mailto = self.error_reporter.build_mailto(report)
+        try:
+            if hasattr(self.page, "launch_url"):
+                self.page.launch_url(mailto)
+            else:
+                webbrowser.open(mailto)
+        except Exception:
+            webbrowser.open(mailto)
+        self._snack("已打开邮件草稿，请确认后发送")
+
+    def _open_overlay(self, control) -> None:
+        try:
+            if hasattr(self.page, "open"):
+                self.page.open(control)
+                return
+        except Exception:  # noqa: BLE001
+            pass
 
         if isinstance(control, ft.SnackBar):
             self.page.snack_bar = control
@@ -357,9 +576,12 @@ class VaultGuardApp:
         self.page.update()
 
     def _close_overlay(self, control) -> None:
-        if hasattr(self.page, "close"):
-            self.page.close(control)
-            return
+        try:
+            if hasattr(self.page, "close"):
+                self.page.close(control)
+                return
+        except Exception:  # noqa: BLE001
+            pass
 
         control.open = False
         self.page.update()
@@ -380,6 +602,7 @@ class VaultGuardApp:
 
     # ========== 主页 ==========
     def _show_home(self) -> None:
+        self._task_stage = "home"
         self.src_field = self._path_field(
             "源目录", self.source_path,
             "路径",
@@ -389,7 +612,7 @@ class VaultGuardApp:
             "路径",
             lambda e: setattr(self, "target_path", e.control.value))
 
-        self._set_content(ft.Column([
+        self._set_task_content(ft.Column([
             self._page_header("本地硬盘增量备份"),
             ft.Container(height=1, bgcolor=T.BORDER_LIGHT),
             _card(
@@ -404,7 +627,8 @@ class VaultGuardApp:
                 ft.Row([
                     _primary_button("开始对比",
                                     icon=ft.Icons.COMPARE_ARROWS_ROUNDED,
-                                    on_click=lambda e: self._do_compare()),
+                                    on_click=self._safe(
+                                        "开始对比", lambda e: self._do_compare())),
                 ], alignment=ft.MainAxisAlignment.END),
             ),
         ], spacing=T.SP_5, scroll=ft.ScrollMode.AUTO))
@@ -425,6 +649,7 @@ class VaultGuardApp:
         )
 
     def _picker_btn(self, is_source: bool) -> ft.Container:
+        prompt = "选择源目录" if is_source else "选择目标目录"
         b = ft.Container(
             content=ft.Icon(ft.Icons.FOLDER_OPEN_OUTLINED,
                             color=T.TEXT_PRIMARY, size=18),
@@ -434,15 +659,19 @@ class VaultGuardApp:
             border_radius=T.RADIUS,
             alignment=ft.Alignment.CENTER,
             tooltip="选择源目录" if is_source else "选择目标目录",
-            on_click=lambda e, s=is_source: self._pick_dir(s),
+            on_click=self._safe(prompt,
+                                lambda e, s=is_source: self._pick_dir(s)),
             animate=ft.Animation(T.DUR_FAST, T.EASE),
         )
 
         def _hover(e: ft.HoverEvent, ctrl=b) -> None:
-            on = e.data == "true"
-            ctrl.border = ft.Border.all(1, T.PRIMARY if on else T.BORDER)
-            ctrl.content.color = T.PRIMARY if on else T.TEXT_PRIMARY
-            ctrl.update()
+            try:
+                on = e.data == "true"
+                ctrl.border = ft.Border.all(1, T.PRIMARY if on else T.BORDER)
+                ctrl.content.color = T.PRIMARY if on else T.TEXT_PRIMARY
+                ctrl.update()
+            except Exception:
+                pass
 
         b.on_hover = _hover
         return b
@@ -458,17 +687,21 @@ class VaultGuardApp:
             try:
                 path = pick_directory(prompt)
             except Exception as e:  # noqa: BLE001
-                self._snack(f"选择目录失败：{e}", error=True)
+                self._handle_error(prompt, e)
                 return
             if not path:
                 return
-            if is_source:
-                self.source_path = path
-                self.src_field.value = path
-            else:
-                self.target_path = path
-                self.dst_field.value = path
-            self.page.update()
+
+            def apply_path() -> None:
+                if is_source:
+                    self.source_path = path
+                    self.src_field.value = path
+                else:
+                    self.target_path = path
+                    self.dst_field.value = path
+                self.page.update()
+
+            self._run_ui(apply_path)
 
         threading.Thread(target=work, daemon=True).start()
 
@@ -485,23 +718,29 @@ class VaultGuardApp:
         if src == dst:
             self._snack("源目录与目标目录不能相同", error=True)
             return
-        Path(dst).mkdir(parents=True, exist_ok=True)
+        try:
+            Path(dst).mkdir(parents=True, exist_ok=True)
 
-        # 记住本次使用的目录，下次启动自动回填
-        self.svc.settings.last_source = src
-        self.svc.settings.last_target = dst
-        self.svc.save_settings()
+            # 记住本次使用的目录，下次启动自动回填
+            self.svc.settings.last_source = src
+            self.svc.settings.last_target = dst
+            self.svc.save_settings()
 
-        resumable = self.svc.find_resumable(src, dst)
-        if resumable:
-            undone = self.svc.db.get_pending_items(resumable["id"], only_undone=True)
-            if undone:
-                self._show_resume_dialog(resumable["id"], len(undone), src, dst)
-                return
+            resumable = self.svc.find_resumable(src, dst)
+            if resumable:
+                undone = self.svc.db.get_pending_items(
+                    resumable["id"], only_undone=True)
+                if undone:
+                    self._show_resume_dialog(resumable["id"], len(undone), src, dst)
+                    return
+        except Exception as ex:  # noqa: BLE001
+            self._handle_error("开始对比", ex)
+            return
 
         self._run_compare(src, dst)
 
     def _run_compare(self, src: str, dst: str) -> None:
+        self._task_stage = "comparing"
         self._compare_started_at = time.monotonic()
         self.cmp_pb_track = _progress_track(height=10)
         _set_progress_value(self.cmp_pb_track, 0)
@@ -516,7 +755,7 @@ class VaultGuardApp:
             "准备扫描 ...", size=T.TEXT_13, color=T.TEXT_PRIMARY,
             overflow=ft.TextOverflow.ELLIPSIS, font_family=T.FONT_MONO)
 
-        self._set_content(ft.Column([
+        self._set_task_content(ft.Column([
             self._page_header("正在对比"),
             ft.Container(height=1, bgcolor=T.BORDER_LIGHT),
             _card(
@@ -558,20 +797,22 @@ class VaultGuardApp:
             self._latest_compare_prog = None
             self._compare_refreshing = True
             # 在事件循环上启动刷新协程（关键：不能用裸线程，否则 update 不 flush）
-            self.page.run_task(refresher)
+            self._start_refresher(refresher, "对比进度刷新")
             try:
                 diff = self.svc.compare(src, dst, progress_cb=progress_cb)
                 self.current_diff = diff
                 self._compare_refreshing = False
-                self._show_confirm(src, dst, diff)
+                self._run_ui(lambda: self._show_confirm(src, dst, diff))
             except Exception as ex:
                 self._compare_refreshing = False
-                self._snack(f"对比失败：{ex}", error=True)
-                self._show_home()
+                self._handle_error("对比失败", ex)
+                self._run_ui(self._show_home)
 
         threading.Thread(target=work, daemon=True).start()
 
     def _render_compare_snapshot(self) -> None:
+        if self._task_stage != "comparing":
+            return
         prog = self._latest_compare_prog
         if prog is None:
             return
@@ -624,10 +865,11 @@ class VaultGuardApp:
                 size=T.TEXT_14, color=T.TEXT_PRIMARY),
             shape=ft.RoundedRectangleBorder(radius=T.RADIUS_MD),
             actions=[
-                _default_button("重新开始", on_click=fresh),
+                _default_button("重新开始",
+                                on_click=self._safe("重新开始", fresh)),
                 _primary_button("从断点继续",
                                 icon=ft.Icons.PLAY_ARROW_ROUNDED,
-                                on_click=cont),
+                                on_click=self._safe("从断点继续", cont)),
             ],
         )
         self._open_overlay(dlg)
@@ -642,6 +884,7 @@ class VaultGuardApp:
     ]
 
     def _show_confirm(self, src: str, dst: str, diff: DiffResult) -> None:
+        self._task_stage = "confirm"
         # 确认页状态：清单副本、勾选集合（默认全选）、排序维度与方向
         self._cf_src = src
         self._cf_dst = dst
@@ -681,7 +924,7 @@ class VaultGuardApp:
         # 全选框 + 已选计数 + 右上角排序 tab
         self._cf_select_all = ft.Checkbox(
             value=True, tristate=True, active_color=T.PRIMARY,
-            on_change=lambda e: self._cf_toggle_all())
+            on_change=self._safe("全选切换", lambda e: self._cf_toggle_all()))
         self._cf_count_text = _muted_text("", size=T.TEXT_13)
         self._cf_tab_holder = ft.Container(content=self._cf_sort_tab())
         toolbar = ft.Container(
@@ -705,9 +948,11 @@ class VaultGuardApp:
         self._cf_confirm_holder = ft.Container(content=self._cf_confirm_btn())
         back_btn = _default_button("返回",
                                    icon=ft.Icons.ARROW_BACK_ROUNDED,
-                                   on_click=lambda e: self._show_home())
+                                   on_click=self._safe(
+                                       "返回任务页",
+                                       lambda e: self._reset_task_home()))
 
-        self._set_content(ft.Column([
+        self._set_task_content(ft.Column([
             self._page_header("待备份清单", f"{src}  →  {dst}"),
             ft.Container(height=1, bgcolor=T.BORDER_LIGHT),
             _card(
@@ -772,15 +1017,19 @@ class VaultGuardApp:
             height=30,
             alignment=ft.Alignment.CENTER,
             animate=ft.Animation(T.DUR_FAST, T.EASE),
-            on_click=lambda e, k=key: self._cf_set_sort(k),
+            on_click=self._safe(f"排序：{label}",
+                                lambda e, k=key: self._cf_set_sort(k)),
         )
 
         def _hover(e: ft.HoverEvent, c=chip, a=active) -> None:
-            if a:
-                return
-            c.border = ft.Border.all(
-                1, T.PRIMARY if e.data == "true" else T.BORDER)
-            c.update()
+            try:
+                if a:
+                    return
+                c.border = ft.Border.all(
+                    1, T.PRIMARY if e.data == "true" else T.BORDER)
+                c.update()
+            except Exception:
+                pass
 
         chip.on_hover = _hover
         return chip
@@ -832,7 +1081,9 @@ class VaultGuardApp:
         kind = "success" if it.action.value == "new" else "warning"
         cb = ft.Checkbox(
             value=iid in self._cf_selected, active_color=T.PRIMARY,
-            on_change=lambda e, k=iid: self._cf_toggle(k, e.control.value))
+            on_change=self._safe(
+                "选择备份文件",
+                lambda e, k=iid: self._cf_toggle(k, e.control.value)))
         return ft.Container(
             content=ft.Row([
                 cb,
@@ -886,7 +1137,7 @@ class VaultGuardApp:
         return _primary_button(
             "确认备份", icon=ft.Icons.PLAY_ARROW_ROUNDED,
             disabled=not self._cf_selected,
-            on_click=lambda e: self._cf_do_backup(),
+            on_click=self._safe("确认备份", lambda e: self._cf_do_backup()),
         )
 
     def _cf_do_backup(self) -> None:
@@ -902,12 +1153,16 @@ class VaultGuardApp:
         self._confirm_backup(self._cf_src, self._cf_dst, filtered)
 
     def _confirm_backup(self, src: str, dst: str, diff: DiffResult) -> None:
-        task_id = self.svc.create_task(src, dst, diff)
-        self.current_task_id = task_id
-        self._start_execution(src, dst, resume=False)
+        try:
+            task_id = self.svc.create_task(src, dst, diff)
+            self.current_task_id = task_id
+            self._start_execution(src, dst, resume=False)
+        except Exception as ex:  # noqa: BLE001
+            self._handle_error("创建备份任务", ex)
 
     # ========== 任务进行页 ==========
     def _show_progress_view(self) -> None:
+        self._task_stage = "backup"
         # 纯色进度条：track + fill，靠真实 width 推进，不做装饰动画
         self.pb_track = ft.Container(
             bgcolor=T.FILL,
@@ -938,13 +1193,13 @@ class VaultGuardApp:
 
         self.btn_pause = _default_button(
             "暂停", icon=ft.Icons.PAUSE_ROUNDED,
-            on_click=lambda e: self._toggle_pause())
+            on_click=self._safe("暂停/继续", lambda e: self._toggle_pause()))
         self.btn_cancel = _default_button(
             "中断", icon=ft.Icons.STOP_ROUNDED,
-            on_click=lambda e: self._cancel_task(),
+            on_click=self._safe("中断备份", lambda e: self._cancel_task()),
             danger=True)
 
-        self._set_content(ft.Column([
+        self._set_task_content(ft.Column([
             self._page_header("备份进行中"),
             ft.Container(height=1, bgcolor=T.BORDER_LIGHT),
             _card(
@@ -985,24 +1240,42 @@ class VaultGuardApp:
         task_id = self.current_task_id
 
         def progress_cb(prog: CopyProgress):
-            self._update_progress(prog)
+            self._latest_copy_prog = prog
+
+        async def refresher():
+            while self._copy_refreshing:
+                self._update_progress()
+                await asyncio.sleep(1 / 15)
+            self._update_progress()
 
         def work():
+            self._latest_copy_prog = None
+            self._last_log_file = ""
+            self._copy_refreshing = True
+            self._start_refresher(refresher, "备份进度刷新")
             try:
                 from vaultguard.core.executor import cleanup_temp_files
                 cleanup_temp_files(dst)
                 prog = self.executor.run(task_id, src, dst, resume=resume,
                                          progress_cb=progress_cb)
-                self.svc._write_text_log(task_id, src, dst, prog)
+                try:
+                    self.svc._write_text_log(task_id, src, dst, prog)
+                except Exception as log_ex:  # noqa: BLE001
+                    self._record_error("写入备份日志失败", log_ex)
                 self._running = False
-                self._on_finished(prog)
+                self._copy_refreshing = False
+                self._run_ui(lambda: self._on_finished(prog))
             except Exception as ex:
                 self._running = False
-                self._snack(f"执行失败：{ex}", error=True)
+                self._copy_refreshing = False
+                self._handle_error("执行备份", ex)
 
         threading.Thread(target=work, daemon=True).start()
 
-    def _update_progress(self, prog: CopyProgress) -> None:
+    def _update_progress(self) -> None:
+        prog = self._latest_copy_prog
+        if prog is None:
+            return
         pct = (prog.transferred_bytes / prog.total_bytes) if prog.total_bytes else 1.0
         # 纯色填充，靠父 Row 的 expand 比例近似真实 width 推进
         if pct < 1.0:
@@ -1026,7 +1299,8 @@ class VaultGuardApp:
             f"{fmt_size(prog.speed_bps)}/s · 剩余 {fmt_eta(prog.eta_seconds)}")
         self.lbl_file.value = prog.current_file or "..."
 
-        if prog.current_file:
+        if prog.current_file and prog.current_file != self._last_log_file:
+            self._last_log_file = prog.current_file
             self.log_view.controls.append(
                 ft.Text(f"✓ {prog.current_file}", size=T.TEXT_12,
                         color=T.TEXT_PRIMARY, font_family=T.FONT_MONO))
@@ -1055,6 +1329,7 @@ class VaultGuardApp:
     def _cancel_task(self) -> None:
         if self.executor:
             self.executor.cancel()
+            self.btn_cancel.on_click = None
             self._snack("已请求中断，断点已保存，可稍后从断点继续")
 
     def _on_finished(self, prog: CopyProgress) -> None:
@@ -1065,6 +1340,7 @@ class VaultGuardApp:
         self._show_result(prog)
 
     def _show_result(self, prog: CopyProgress) -> None:
+        self._task_stage = "result"
         success = prog.finished and prog.failed == 0
         if success:
             kind, color, bg, icon = ("success", T.SUCCESS, T.SUCCESS_BG,
@@ -1097,7 +1373,7 @@ class VaultGuardApp:
                          color=T.TEXT_TITLE, weight=T.FW_MEDIUM)),
             ])
 
-        self._set_content(ft.Column([
+        self._set_task_content(ft.Column([
             self._page_header("备份结果"),
             ft.Container(height=1, bgcolor=T.BORDER_LIGHT),
             _card(
@@ -1119,10 +1395,12 @@ class VaultGuardApp:
                 ft.Row([
                     _default_button("返回任务",
                                     icon=ft.Icons.HOME_OUTLINED,
-                                    on_click=lambda e: self._goto_home()),
+                                    on_click=self._safe(
+                                        "返回任务", lambda e: self._goto_home())),
                     _primary_button("查看历史",
                                     icon=ft.Icons.HISTORY_ROUNDED,
-                                    on_click=lambda e: self._goto_history()),
+                                    on_click=self._safe(
+                                        "查看历史", lambda e: self._goto_history())),
                 ], alignment=ft.MainAxisAlignment.END,
                    spacing=T.SP_3),
             ),
@@ -1131,7 +1409,7 @@ class VaultGuardApp:
     def _goto_home(self) -> None:
         self._nav_index = 0
         self._refresh_nav()
-        self._show_home()
+        self._reset_task_home()
 
     def _goto_history(self) -> None:
         self._nav_index = 1
@@ -1140,7 +1418,11 @@ class VaultGuardApp:
 
     # ========== 历史记录页 ==========
     def _show_history(self) -> None:
-        tasks = self.svc.list_tasks()
+        try:
+            tasks = self.svc.list_tasks()
+        except Exception as ex:  # noqa: BLE001
+            self._handle_error("加载历史记录", ex)
+            return
         if not tasks:
             self._set_content(ft.Column([
                 self._page_header("历史记录"),
@@ -1186,8 +1468,9 @@ class VaultGuardApp:
                     icon_color=T.PRIMARY,
                     icon_size=18,
                     tooltip="查看详情",
-                    on_click=lambda e, tid=t["id"]:
-                        self._show_task_detail(tid))),
+                    on_click=self._safe(
+                        "查看任务详情",
+                        lambda e, tid=t["id"]: self._show_task_detail(tid)))),
             ]))
 
         def col(label):
@@ -1220,8 +1503,12 @@ class VaultGuardApp:
         ], spacing=T.SP_5, expand=True))
 
     def _show_task_detail(self, task_id: int) -> None:
-        logs = self.svc.get_file_logs(task_id)
-        task = self.svc.db.get_task(task_id)
+        try:
+            logs = self.svc.get_file_logs(task_id)
+            task = self.svc.db.get_task(task_id)
+        except Exception as ex:  # noqa: BLE001
+            self._handle_error("加载任务详情", ex)
+            return
         items = []
         for lg in logs:
             ok = lg["action"] != "fail"
@@ -1251,7 +1538,8 @@ class VaultGuardApp:
             content=content,
             shape=ft.RoundedRectangleBorder(radius=T.RADIUS_MD),
             actions=[_default_button(
-                "关闭", on_click=lambda e: self._close_overlay(dlg))],
+                "关闭", on_click=self._safe(
+                    "关闭任务详情", lambda e: self._close_overlay(dlg)))],
         )
         self._open_overlay(dlg)
 
@@ -1303,8 +1591,16 @@ class VaultGuardApp:
                         size=T.TEXT_12),
         ], spacing=T.SP_2)
 
-        save_btn = _primary_button("保存设置", icon=ft.Icons.SAVE_OUTLINED,
-                                   on_click=lambda e: self._save_settings())
+        save_btn = _primary_button(
+            "保存设置", icon=ft.Icons.SAVE_OUTLINED,
+            on_click=self._safe("保存设置", lambda e: self._save_settings()))
+        has_error_report = self.error_reporter.load_latest() is not None
+        report_btn = _default_button(
+            "发送最近错误", icon=ft.Icons.EMAIL_OUTLINED,
+            on_click=self._safe(
+                "发送最近错误", lambda e: self._send_error_report()),
+            disabled=not has_error_report,
+            tooltip=(None if has_error_report else "最近没有报错需要提交"))
 
         self._set_content(ft.Column([
             self._page_header("设置"),
@@ -1335,7 +1631,14 @@ class VaultGuardApp:
                         _section_title("排除规则"),
                         self.f_exclude,
                     ),
-                    _card(data_dir_row),
+                    _card(
+                        _section_title("错误反馈"),
+                        data_dir_row,
+                        _muted_text(
+                            f"异常会自动记录到 {self.error_reporter.report_dir}",
+                            size=T.TEXT_12),
+                        ft.Row([report_btn], alignment=ft.MainAxisAlignment.END),
+                    ),
                     ft.Row([save_btn], alignment=ft.MainAxisAlignment.END),
                 ], spacing=T.SP_4),
                 width=640,
@@ -1356,8 +1659,11 @@ class VaultGuardApp:
         s.use_recycle = self.f_use_recycle.value
         s.exclude_patterns = [p.strip() for p in self.f_exclude.value.splitlines()
                               if p.strip()]
-        self.svc.save_settings()
-        self._snack("设置已保存")
+        try:
+            self.svc.save_settings()
+            self._snack("设置已保存")
+        except Exception as ex:  # noqa: BLE001
+            self._handle_error("保存设置", ex)
 
 
 def main(page: ft.Page) -> None:
@@ -1384,7 +1690,7 @@ def run() -> None:
             os.path.dirname(os.path.dirname(sys.executable)), "Resources")
         client_dir = os.path.join(resources, "client")
         if os.path.isdir(client_dir):
-            os.environ["FLET_VIEW_PATH"] = client_dir
+            os.environ[VIEW_PATH_ENV] = client_dir
 
     ft.app(target=main)
 

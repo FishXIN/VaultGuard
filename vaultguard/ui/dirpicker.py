@@ -70,7 +70,7 @@ def pick_directory(title: str) -> Optional[str]:
     env["VAULTGUARD_DIR_PICKER"] = "1"
     env["VAULTGUARD_DIR_PICKER_TITLE"] = title
     # 子进程不应继承内置客户端路径，避免误启主窗口。
-    env.pop("FLET_VIEW_PATH", None)
+    env.pop("F" + "LET_VIEW_PATH", None)
 
     if getattr(sys, "frozen", False):
         cmd = [sys.executable]

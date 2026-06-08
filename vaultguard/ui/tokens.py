@@ -8,7 +8,7 @@
 """
 from __future__ import annotations
 
-import flet as ft
+from .runtime import ft
 
 
 # ============ 1. 颜色 ============
