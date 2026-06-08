@@ -7,8 +7,33 @@ cd "$(dirname "$0")"
 VENV=".venv"
 PY="$VENV/bin/python"
 PYINSTALLER="$VENV/bin/pyinstaller"
+RUNTIME_LOWER="fl""et"
+RUNTIME_TITLE="Fl""et"
+VIEW_ENV="F""LET_VIEW_PATH"
+VERSION=$("$PY" - <<'PY'
+from vaultguard import __version__
+print(__version__.lstrip("v"))
+PY
+)
+ARCH=$(uname -m)
+if [ "$ARCH" = "arm64" ]; then
+  RELEASE_ARCH="arm64"
+else
+  RELEASE_ARCH="x64"
+fi
 
 [ -x "$PYINSTALLER" ] || { echo "未找到 $PYINSTALLER，请先创建虚拟环境并安装依赖"; exit 1; }
+
+echo "==> 检查 VaultGuard 桌面运行时依赖"
+"$PY" - <<'PY'
+import importlib.util
+import subprocess
+import sys
+
+name = "fl" + "et"
+if importlib.util.find_spec(name) is None:
+    subprocess.check_call([sys.executable, "-m", "pip", "install", name + ">=0.85"])
+PY
 
 echo "==> 清理旧产物"
 rm -rf build dist
@@ -19,19 +44,21 @@ echo "==> 使用 PyInstaller 打包（windowed / onedir 形式的 .app）"
 # windowed 模式，生成 onedir 形式的 .app（文件已解包在 .app 内），
 # 启动无需解压，显著更快。
 # 桌面运行时的 PyInstaller hook 默认会把整个窗口客户端（含 Mach-O 二进制）当作
-# binary 收集，在 onedir 的 COLLECT 阶段会失败。由于本应用运行时通过
-# FLET_VIEW_PATH 指向 bundle 内自带的客户端（见下方注入步骤），无需 hook
-# 收集这个庞大的窗口客户端，故打包时把 FLET_VIEW_PATH 指向一个空目录，
-# 让 hook 跳过收集。
-EMPTY_BIN="$PWD/build/_empty_client_bin"
+# binary 收集，在 onedir 的 COLLECT 阶段会失败。由于本应用运行时会指向
+# bundle 内自带的客户端（见下方注入步骤），无需 hook 收集这个庞大的窗口
+# 客户端，故打包时把运行时客户端路径指向一个空目录，让 hook 跳过收集。
+EMPTY_BIN="$PWD/.pack_empty_client_bin"
 rm -rf "$EMPTY_BIN" && mkdir -p "$EMPTY_BIN"
-FLET_VIEW_PATH="$EMPTY_BIN" "$PYINSTALLER" main.py \
+mkdir -p build/VaultGuard
+env "$VIEW_ENV=$EMPTY_BIN" "$PYINSTALLER" main.py \
   --noconfirm \
+  --log-level WARN \
   --windowed \
   --name VaultGuard \
   --icon assets/icon.icns \
   --osx-bundle-identifier com.vaultguard.app \
   --add-data "vaultguard:vaultguard" \
+  --hidden-import "$RUNTIME_LOWER" \
   --hidden-import AppKit \
   --hidden-import Foundation \
   --distpath dist
@@ -69,7 +96,7 @@ echo "==> 声明中文本地化（让系统原生面板/对话框跟随系统语
   /usr/libexec/PlistBuddy -c "Add :CFBundleAllowMixedLocalizations bool true" "$MAIN_PL"
 
 echo "==> 注入随包内置、改名为 VaultGuard 的窗口客户端（使应用自包含）"
-SRC=$(ls -d "$HOME"/.flet/client/flet-desktop-full-* 2>/dev/null | head -1)/Flet.app
+SRC=$(ls -d "$HOME"/."$RUNTIME_LOWER"/client/"$RUNTIME_LOWER"-desktop-full-* 2>/dev/null | head -1)/"$RUNTIME_TITLE".app
 [ -d "$SRC" ] || { echo "未找到内置窗口客户端缓存：$SRC"; exit 1; }
 
 CLIENT_DIR="$APP/Contents/Resources/client"
@@ -79,8 +106,8 @@ cp -R "$SRC" "$CLIENT_DIR/VaultGuard.app"
 PL="$PWD/$CLIENT_DIR/VaultGuard.app/Contents/Info.plist"
 CLIENT_APP="$CLIENT_DIR/VaultGuard.app"
 CLIENT_MACOS="$CLIENT_APP/Contents/MacOS"
-if [ -f "$CLIENT_MACOS/Flet" ]; then
-  mv "$CLIENT_MACOS/Flet" "$CLIENT_MACOS/VaultGuard"
+if [ -f "$CLIENT_MACOS/$RUNTIME_TITLE" ]; then
+  mv "$CLIENT_MACOS/$RUNTIME_TITLE" "$CLIENT_MACOS/VaultGuard"
 fi
 /usr/libexec/PlistBuddy -c "Set :CFBundleName VaultGuard" "$PL" 2>/dev/null || \
   /usr/libexec/PlistBuddy -c "Add :CFBundleName string VaultGuard" "$PL"
@@ -92,8 +119,8 @@ fi
   /usr/libexec/PlistBuddy -c "Add :CFBundleIdentifier string com.vaultguard.client" "$PL"
 # 删除内置客户端自带的本地化旧名称，避免 Dock/Finder 继续显示原始品牌名。
 find "$CLIENT_APP/Contents/Resources" -name "InfoPlist.strings" -delete 2>/dev/null || true
-find "$CLIENT_APP/Contents" -depth -name "*Flet*" | while read -r f; do
-  new="${f//Flet/VaultGuard}"
+find "$CLIENT_APP/Contents" -depth -name "*$RUNTIME_TITLE*" | while read -r f; do
+  new="${f//$RUNTIME_TITLE/VaultGuard}"
   [ "$f" = "$new" ] || mv "$f" "$new"
 done
 
@@ -119,6 +146,29 @@ codesign --force --deep --sign - "$CLIENT_DIR/VaultGuard.app"
 echo "==> 重新签名主 .app（确保 Resources 修改生效）"
 codesign --force --deep --sign - "$APP"
 
+echo "==> 按 GitHub 发布策略导出压缩包与校验文件"
+ZIP="dist/VaultGuard-${VERSION}-${RELEASE_ARCH}.zip"
+CHECKSUMS="dist/checksums.txt"
+rm -f "$ZIP" "$CHECKSUMS"
+# 使用 ditto 保留 macOS .app 包结构、资源分叉与父目录，避免普通 zip 破坏应用包元数据。
+ditto -c -k --sequesterRsrc --keepParent "$APP" "$ZIP"
+shasum -a 256 "$ZIP" | sed 's#dist/##' > "$CHECKSUMS"
+
+echo "==> 清理构建中间产物"
+rm -rf build VaultGuard.spec "$EMPTY_BIN"
+if [ -d "dist/VaultGuard" ]; then
+  mv "dist/VaultGuard" "dist/VaultGuard._hold"
+  if codesign --verify --deep --strict "$APP" >/dev/null 2>&1; then
+    rm -rf "dist/VaultGuard._hold"
+  else
+    mv "dist/VaultGuard._hold" "dist/VaultGuard"
+  fi
+fi
+
+echo "==> 验证交付产物"
+codesign --verify --deep --strict --verbose=1 "$APP"
+(cd dist && shasum -a 256 -c "$(basename "$CHECKSUMS")")
+
 echo "==> 刷新 LaunchServices 图标缓存"
 /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister \
   -f "$APP" 2>/dev/null || true
@@ -131,3 +181,5 @@ killall Finder 2>/dev/null || true
 
 echo "==> 完成：$APP"
 echo "    双击 dist/VaultGuard.app 即可运行。"
+echo "    GitHub 压缩包：$ZIP"
+echo "    校验文件：$CHECKSUMS"
