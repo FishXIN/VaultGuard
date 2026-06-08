@@ -209,6 +209,9 @@ class VaultGuardApp:
         self._nav_index = 0
         self._nav_items: list[ft.Container] = []
         self._compare_started_at = 0.0
+        # 数据采集与界面刷新解耦：扫描线程只写快照，由独立节流线程统一重绘
+        self._latest_compare_prog: Optional[CompareProgress] = None
+        self._compare_refreshing = False
 
         self._setup_page()
         self._build_layout()
@@ -515,20 +518,37 @@ class VaultGuardApp:
         ], spacing=T.SP_5))
 
         def progress_cb(prog: CompareProgress):
-            self._update_compare_progress(prog)
+            # 仅写入最新快照，绝不在采集线程触碰 UI / page.update()
+            self._latest_compare_prog = prog
+
+        def refresher():
+            # 固定 ~15fps 节流刷新：把最新快照渲染到 UI，统一重绘一次
+            while self._compare_refreshing:
+                self._render_compare_snapshot()
+                time.sleep(1 / 15)
+            # 退出前补最后一帧，确保最终状态落地
+            self._render_compare_snapshot()
 
         def work():
+            self._latest_compare_prog = None
+            self._compare_refreshing = True
+            threading.Thread(target=refresher, daemon=True).start()
             try:
                 diff = self.svc.compare(src, dst, progress_cb=progress_cb)
                 self.current_diff = diff
+                self._compare_refreshing = False
                 self._show_confirm(src, dst, diff)
             except Exception as ex:
+                self._compare_refreshing = False
                 self._snack(f"对比失败：{ex}", error=True)
                 self._show_home()
 
         threading.Thread(target=work, daemon=True).start()
 
-    def _update_compare_progress(self, prog: CompareProgress) -> None:
+    def _render_compare_snapshot(self) -> None:
+        prog = self._latest_compare_prog
+        if prog is None:
+            return
         total = prog.total_files
         pct = (prog.processed_files / total) if total else 0.0
 
