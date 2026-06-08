@@ -607,18 +607,40 @@ class VaultGuardApp:
         self.page.open(dlg)
 
     # ========== 确认页 ==========
+    # 排序维度：键 -> (标签, 取值函数, 默认是否升序)
+    _CF_SORT_DEFS = [
+        ("name", "名称", lambda it: it.rel_path.lower(), True),
+        ("size", "大小", lambda it: it.size, False),
+        ("type", "类型", lambda it: Path(it.rel_path).suffix.lower(), True),
+        ("date", "日期", lambda it: it.src_mtime, False),
+    ]
+
     def _show_confirm(self, src: str, dst: str, diff: DiffResult) -> None:
-        def stat_cell(label, value, color, icon=None):
-            head_children = []
-            if icon is not None:
-                head_children.append(ft.Icon(icon, color=color, size=16))
-            head_children.append(
-                ft.Text(str(value), size=T.TEXT_28,
-                        weight=T.FW_MEDIUM, color=color,
-                        font_family=T.FONT_MONO))
+        # 确认页状态：清单副本、勾选集合（默认全选）、排序维度与方向
+        self._cf_src = src
+        self._cf_dst = dst
+        self._cf_diff = diff
+        self._cf_items = list(diff.pending_items)
+        self._cf_selected = {id(it) for it in self._cf_items}
+        self._cf_sort_key = "name"
+        self._cf_sort_asc = True
+
+        # 顶部统计值随勾选动态更新
+        self._cf_stat_new = ft.Text(
+            str(diff.new_count), size=T.TEXT_28, weight=T.FW_MEDIUM,
+            color=T.SUCCESS, font_family=T.FONT_MONO)
+        self._cf_stat_upd = ft.Text(
+            str(diff.updated_count), size=T.TEXT_28, weight=T.FW_MEDIUM,
+            color=T.WARNING, font_family=T.FONT_MONO)
+        self._cf_stat_bytes = ft.Text(
+            fmt_size(diff.pending_bytes), size=T.TEXT_28, weight=T.FW_MEDIUM,
+            color=T.PRIMARY, font_family=T.FONT_MONO)
+
+        def stat_cell(value_ctrl, label, color, icon):
             return ft.Container(
                 content=ft.Column([
-                    ft.Row(head_children, spacing=T.SP_2, tight=True,
+                    ft.Row([ft.Icon(icon, color=color, size=16), value_ctrl],
+                           spacing=T.SP_2, tight=True,
                            alignment=ft.MainAxisAlignment.CENTER),
                     _muted_text(label, size=T.TEXT_12),
                 ], horizontal_alignment=ft.CrossAxisAlignment.CENTER,
@@ -630,33 +652,136 @@ class VaultGuardApp:
         def vline():
             return ft.Container(width=1, bgcolor=T.BORDER, height=44)
 
-        rows = []
-        for it in diff.pending_items[:500]:
-            kind = "success" if it.action.value == "new" else "warning"
-            rows.append(ft.Container(
-                content=ft.Row([
-                    _badge(it.action.value, kind),
-                    ft.Text(it.rel_path, size=T.TEXT_13, expand=True,
-                            color=T.TEXT_TITLE, font_family=T.FONT_MONO,
-                            overflow=ft.TextOverflow.ELLIPSIS),
-                    _mono_text(fmt_size(it.size), size=T.TEXT_12,
-                               color=T.TEXT_TERTIARY),
-                ], spacing=T.SP_3,
-                   vertical_alignment=ft.CrossAxisAlignment.CENTER),
-                padding=ft.Padding.symmetric(vertical=8, horizontal=T.SP_4),
-                border=ft.Border(bottom=ft.BorderSide(1, T.BORDER_LIGHT)),
-            ))
-        if len(diff.pending_items) > 500:
-            rows.append(ft.Container(
-                content=_muted_text(
-                    f"... 以及另外 {len(diff.pending_items) - 500} 个文件",
-                    size=T.TEXT_12),
-                padding=ft.Padding.symmetric(vertical=8, horizontal=T.SP_4)))
+        # 全选框 + 已选计数 + 右上角排序 tab
+        self._cf_select_all = ft.Checkbox(
+            value=True, tristate=True, active_color=T.PRIMARY,
+            on_change=lambda e: self._cf_toggle_all())
+        self._cf_count_text = _muted_text("", size=T.TEXT_13)
+        self._cf_tab_holder = ft.Container(content=self._cf_sort_tab())
+        toolbar = ft.Container(
+            content=ft.Row([
+                ft.Row([self._cf_select_all,
+                        ft.Text("全选", size=T.TEXT_13, color=T.TEXT_PRIMARY,
+                                weight=T.FW_MEDIUM),
+                        self._cf_count_text],
+                       spacing=T.SP_2,
+                       vertical_alignment=ft.CrossAxisAlignment.CENTER),
+                self._cf_tab_holder,
+            ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+               vertical_alignment=ft.CrossAxisAlignment.CENTER),
+            padding=ft.Padding.symmetric(vertical=T.SP_2, horizontal=T.SP_4),
+            border=ft.Border(bottom=ft.BorderSide(1, T.BORDER)),
+        )
 
-        if rows:
-            list_view = ft.ListView(rows, spacing=0, expand=True)
+        self._cf_list_holder = ft.Container(
+            content=self._cf_build_listview(), expand=True)
+
+        self._cf_confirm_holder = ft.Container(content=self._cf_confirm_btn())
+        back_btn = _default_button("返回",
+                                   icon=ft.Icons.ARROW_BACK_ROUNDED,
+                                   on_click=lambda e: self._show_home())
+
+        self._set_content(ft.Column([
+            self._page_header("待备份清单", f"{src}  →  {dst}"),
+            ft.Container(height=1, bgcolor=T.BORDER_LIGHT),
+            _card(
+                ft.Row([
+                    stat_cell(self._cf_stat_new, "新增", T.SUCCESS,
+                              ft.Icons.ADD_CIRCLE_OUTLINE_ROUNDED),
+                    vline(),
+                    stat_cell(self._cf_stat_upd, "更新", T.WARNING,
+                              ft.Icons.AUTORENEW_ROUNDED),
+                    vline(),
+                    stat_cell(ft.Text(str(diff.skipped_count), size=T.TEXT_28,
+                                      weight=T.FW_MEDIUM, color=T.TEXT_TERTIARY,
+                                      font_family=T.FONT_MONO),
+                              "跳过", T.TEXT_TERTIARY,
+                              ft.Icons.SKIP_NEXT_ROUNDED),
+                    vline(),
+                    stat_cell(self._cf_stat_bytes, "预计传输", T.PRIMARY,
+                              ft.Icons.UPLOAD_OUTLINED),
+                ], vertical_alignment=ft.CrossAxisAlignment.CENTER),
+            ),
+            ft.Container(
+                content=ft.Column([toolbar, self._cf_list_holder],
+                                  spacing=0, expand=True),
+                bgcolor=T.BG,
+                border_radius=T.RADIUS_MD,
+                border=ft.Border.all(1, T.BORDER),
+                expand=True,
+            ),
+            ft.Row([back_btn, self._cf_confirm_holder],
+                   alignment=ft.MainAxisAlignment.END,
+                   spacing=T.SP_3),
+        ], spacing=T.SP_5, expand=True))
+
+        self._cf_sync_meta(update=False)
+
+    # ---------- 确认页：排序 tab ----------
+    def _cf_sort_tab(self) -> ft.Row:
+        chips = [self._cf_sort_chip(key, label)
+                 for key, label, _fn, _asc in self._CF_SORT_DEFS]
+        return ft.Row([
+            _muted_text("排序", size=T.TEXT_12),
+            *chips,
+        ], spacing=T.SP_1, tight=True,
+           vertical_alignment=ft.CrossAxisAlignment.CENTER)
+
+    def _cf_sort_chip(self, key: str, label: str) -> ft.Container:
+        active = key == self._cf_sort_key
+        fg = T.PRIMARY if active else T.TEXT_PRIMARY
+        children = [ft.Text(label, size=T.TEXT_13, color=fg,
+                            weight=T.FW_MEDIUM)]
+        if active:
+            children.append(ft.Icon(
+                ft.Icons.ARROW_UPWARD_ROUNDED if self._cf_sort_asc
+                else ft.Icons.ARROW_DOWNWARD_ROUNDED,
+                size=14, color=fg))
+        chip = ft.Container(
+            content=ft.Row(children, spacing=T.SP_1, tight=True),
+            bgcolor=T.PRIMARY_BG if active else T.BG,
+            border=ft.Border.all(1, T.PRIMARY if active else T.BORDER),
+            border_radius=T.RADIUS,
+            padding=ft.Padding.symmetric(vertical=0, horizontal=T.SP_3),
+            height=30,
+            alignment=ft.Alignment.CENTER,
+            animate=ft.Animation(T.DUR_FAST, T.EASE),
+            on_click=lambda e, k=key: self._cf_set_sort(k),
+        )
+
+        def _hover(e: ft.HoverEvent, c=chip, a=active) -> None:
+            if a:
+                return
+            c.border = ft.Border.all(
+                1, T.PRIMARY if e.data == "true" else T.BORDER)
+            c.update()
+
+        chip.on_hover = _hover
+        return chip
+
+    def _cf_set_sort(self, key: str) -> None:
+        if key == self._cf_sort_key:
+            self._cf_sort_asc = not self._cf_sort_asc
         else:
-            list_view = ft.Container(
+            self._cf_sort_key = key
+            default_asc = next(asc for k, _l, _fn, asc in self._CF_SORT_DEFS
+                               if k == key)
+            self._cf_sort_asc = default_asc
+        self._cf_tab_holder.content = self._cf_sort_tab()
+        self._cf_list_holder.content = self._cf_build_listview()
+        self.page.update()
+
+    def _cf_apply_sort(self) -> None:
+        fn = next(f for k, _l, f, _a in self._CF_SORT_DEFS
+                  if k == self._cf_sort_key)
+        self._cf_items.sort(key=fn, reverse=not self._cf_sort_asc)
+
+    # ---------- 确认页：列表与勾选 ----------
+    def _cf_build_listview(self):
+        self._cf_apply_sort()
+        items = self._cf_items
+        if not items:
+            return ft.Container(
                 content=ft.Column([
                     ft.Icon(ft.Icons.CHECK_CIRCLE_OUTLINE_ROUNDED,
                             color=T.SUCCESS, size=40),
@@ -667,46 +792,88 @@ class VaultGuardApp:
                 padding=T.SP_8,
                 alignment=ft.Alignment.CENTER,
             )
+        rows = [self._cf_row(it) for it in items[:500]]
+        if len(items) > 500:
+            rows.append(ft.Container(
+                content=_muted_text(
+                    f"... 以及另外 {len(items) - 500} 个文件（默认随全选一并备份）",
+                    size=T.TEXT_12),
+                padding=ft.Padding.symmetric(vertical=8, horizontal=T.SP_4)))
+        return ft.ListView(rows, spacing=0, expand=True)
 
-        confirm_btn = _primary_button(
-            "确认备份", icon=ft.Icons.PLAY_ARROW_ROUNDED,
-            disabled=not diff.pending_items,
-            on_click=lambda e: self._confirm_backup(src, dst, diff),
+    def _cf_row(self, it) -> ft.Container:
+        iid = id(it)
+        kind = "success" if it.action.value == "new" else "warning"
+        cb = ft.Checkbox(
+            value=iid in self._cf_selected, active_color=T.PRIMARY,
+            on_change=lambda e, k=iid: self._cf_toggle(k, e.control.value))
+        return ft.Container(
+            content=ft.Row([
+                cb,
+                _badge(it.action.value, kind),
+                ft.Text(it.rel_path, size=T.TEXT_13, expand=True,
+                        color=T.TEXT_TITLE, font_family=T.FONT_MONO,
+                        overflow=ft.TextOverflow.ELLIPSIS),
+                _mono_text(fmt_size(it.size), size=T.TEXT_12,
+                           color=T.TEXT_TERTIARY),
+            ], spacing=T.SP_3,
+               vertical_alignment=ft.CrossAxisAlignment.CENTER),
+            padding=ft.Padding.symmetric(vertical=4, horizontal=T.SP_4),
+            border=ft.Border(bottom=ft.BorderSide(1, T.BORDER_LIGHT)),
         )
-        back_btn = _default_button("返回",
-                                   icon=ft.Icons.ARROW_BACK_ROUNDED,
-                                   on_click=lambda e: self._show_home())
 
-        self._set_content(ft.Column([
-            self._page_header("待备份清单", f"{src}  →  {dst}"),
-            ft.Container(height=1, bgcolor=T.BORDER_LIGHT),
-            _card(
-                ft.Row([
-                    stat_cell("新增", diff.new_count, T.SUCCESS,
-                              ft.Icons.ADD_CIRCLE_OUTLINE_ROUNDED),
-                    vline(),
-                    stat_cell("更新", diff.updated_count, T.WARNING,
-                              ft.Icons.AUTORENEW_ROUNDED),
-                    vline(),
-                    stat_cell("跳过", diff.skipped_count, T.TEXT_TERTIARY,
-                              ft.Icons.SKIP_NEXT_ROUNDED),
-                    vline(),
-                    stat_cell("预计传输", fmt_size(diff.pending_bytes),
-                              T.PRIMARY,
-                              ft.Icons.UPLOAD_OUTLINED),
-                ], vertical_alignment=ft.CrossAxisAlignment.CENTER),
-            ),
-            ft.Container(
-                content=list_view,
-                bgcolor=T.BG,
-                border_radius=T.RADIUS_MD,
-                border=ft.Border.all(1, T.BORDER),
-                expand=True,
-            ),
-            ft.Row([back_btn, confirm_btn],
-                   alignment=ft.MainAxisAlignment.END,
-                   spacing=T.SP_3),
-        ], spacing=T.SP_5, expand=True))
+    def _cf_toggle(self, iid: int, value: bool) -> None:
+        if value:
+            self._cf_selected.add(iid)
+        else:
+            self._cf_selected.discard(iid)
+        self._cf_sync_meta()
+
+    def _cf_toggle_all(self) -> None:
+        if len(self._cf_selected) >= len(self._cf_items):
+            self._cf_selected = set()
+        else:
+            self._cf_selected = {id(it) for it in self._cf_items}
+        self._cf_list_holder.content = self._cf_build_listview()
+        self._cf_sync_meta()
+
+    def _cf_sync_meta(self, update: bool = True) -> None:
+        n = len(self._cf_selected)
+        m = len(self._cf_items)
+        self._cf_select_all.value = (
+            True if n == m and m > 0 else (False if n == 0 else None))
+        self._cf_count_text.value = f"已选 {n} / {m}"
+        sel_new = sum(1 for it in self._cf_diff.new_items
+                      if id(it) in self._cf_selected)
+        sel_upd = sum(1 for it in self._cf_diff.updated_items
+                      if id(it) in self._cf_selected)
+        sel_bytes = sum(it.size for it in self._cf_items
+                        if id(it) in self._cf_selected)
+        self._cf_stat_new.value = str(sel_new)
+        self._cf_stat_upd.value = str(sel_upd)
+        self._cf_stat_bytes.value = fmt_size(sel_bytes)
+        self._cf_confirm_holder.content = self._cf_confirm_btn()
+        if update:
+            self.page.update()
+
+    def _cf_confirm_btn(self) -> ft.Container:
+        return _primary_button(
+            "确认备份", icon=ft.Icons.PLAY_ARROW_ROUNDED,
+            disabled=not self._cf_selected,
+            on_click=lambda e: self._cf_do_backup(),
+        )
+
+    def _cf_do_backup(self) -> None:
+        sel = self._cf_selected
+        if not sel:
+            return
+        diff = self._cf_diff
+        filtered = DiffResult(
+            new_items=[it for it in diff.new_items if id(it) in sel],
+            updated_items=[it for it in diff.updated_items if id(it) in sel],
+            skipped_items=diff.skipped_items,
+        )
+        self._confirm_backup(self._cf_src, self._cf_dst, filtered)
 
     def _confirm_backup(self, src: str, dst: str, diff: DiffResult) -> None:
         task_id = self.svc.create_task(src, dst, diff)
