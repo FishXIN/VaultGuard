@@ -73,6 +73,19 @@ class DiffResult:
 
 
 @dataclass
+class CompareProgress:
+    """对比过程中的实时进度快照。"""
+    phase: str = "comparing"       # scanning / comparing
+    current_file: str = ""
+    processed_files: int = 0
+    total_files: int = 0
+    progress_ratio: float = 0.0
+    elapsed_seconds: float = 0.0
+    eta_seconds: float = 0.0
+    finished: bool = False
+
+
+@dataclass
 class CopyProgress:
     """执行过程中的实时进度快照。"""
     current_file: str = ""

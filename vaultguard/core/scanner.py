@@ -7,10 +7,11 @@ from __future__ import annotations
 
 import fnmatch
 import os
+import time
 from pathlib import Path
 from typing import Callable, Iterator, Optional
 
-from .models import Action, DiffItem, DiffResult, FileEntry
+from .models import Action, CompareProgress, DiffItem, DiffResult, FileEntry
 
 
 def _matches_exclude(name: str, rel_path: str, patterns: list[str]) -> bool:
@@ -78,6 +79,75 @@ def scan_directory(
             yield FileEntry(rel_path=rel, size=st.st_size, mtime=st.st_mtime)
 
 
+def _count_files_with_progress(
+    root: Path,
+    exclude_patterns: list[str],
+    emit: Callable[[int, float, str], None],
+) -> int:
+    """统计文件数量，并按真实扫描工作量连续输出确定态进度。
+
+    文件总量在统计完成前天然未知，因此这里用已扫描文件、目录和目录项构成
+    单调递增的进度估算；它不是无意义动画，进度只随实际扫描推进而推进。
+    """
+    stack = [root]
+    processed_dirs = 0
+    scanned_entries = 0
+    total_files = 0
+    last_emit_at = 0.0
+    last_ratio = 0.0
+
+    def estimate_ratio() -> float:
+        work_units = total_files + processed_dirs * 12 + scanned_entries * 0.15
+        if work_units <= 0:
+            return 0.0
+        return min(0.98, work_units / (work_units + 500))
+
+    def send(current_file: str = "", force: bool = False) -> None:
+        nonlocal last_emit_at, last_ratio
+        now = time.monotonic()
+        if not force and now - last_emit_at < 0.08:
+            return
+        last_emit_at = now
+        last_ratio = max(last_ratio, estimate_ratio())
+        emit(total_files, last_ratio, current_file)
+
+    emit(0, 0.0, "")
+    while stack:
+        dirpath = stack.pop()
+        processed_dirs += 1
+        send(str(dirpath.relative_to(root)) if dirpath != root else "", force=True)
+        try:
+            entries = os.scandir(dirpath)
+        except OSError:
+            send(force=True)
+            continue
+
+        with entries:
+            for entry in entries:
+                scanned_entries += 1
+                rel = os.path.relpath(entry.path, root)
+                if _matches_exclude(entry.name, rel, exclude_patterns):
+                    send(rel)
+                    continue
+                try:
+                    if entry.is_dir(follow_symlinks=False):
+                        stack.append(Path(entry.path))
+                        send(rel, force=True)
+                    elif entry.is_file(follow_symlinks=False):
+                        total_files += 1
+                        send(rel, force=True)
+                    else:
+                        send(rel, force=True)
+                except OSError:
+                    send(rel, force=True)
+                    continue
+
+        send(force=True)
+
+    emit(total_files, 1.0, "")
+    return total_files
+
+
 def compare(
     source: str | Path,
     target: str | Path,
@@ -85,7 +155,7 @@ def compare(
     mtime_tolerance: float = 2.0,
     compare_size: bool = True,
     exclude_patterns: Optional[list[str]] = None,
-    progress_cb: Optional[Callable[[int], None]] = None,
+    progress_cb: Optional[Callable[[CompareProgress], None]] = None,
 ) -> DiffResult:
     """对比源目录与目标目录，生成待备份清单。
 
@@ -100,12 +170,49 @@ def compare(
     target = Path(target)
     exclude_patterns = exclude_patterns or []
     result = DiffResult()
+    started_at = time.monotonic()
+
+    def emit(
+        phase: str,
+        processed: int,
+        total: int,
+        current_file: str = "",
+        finished: bool = False,
+        progress_ratio: float = 0.0,
+    ) -> None:
+        if not progress_cb:
+            return
+        elapsed = time.monotonic() - started_at
+        eta = 0.0
+        if phase == "comparing" and processed > 0 and total > 0 and not finished:
+            eta = (elapsed / processed) * max(total - processed, 0)
+        progress_cb(CompareProgress(
+            phase=phase,
+            current_file=current_file,
+            processed_files=processed,
+            total_files=total,
+            progress_ratio=progress_ratio,
+            elapsed_seconds=elapsed,
+            eta_seconds=eta,
+            finished=finished,
+        ))
+
+    total_files = 0
+    if progress_cb:
+        def scan_emit(count: int, ratio: float, current_file: str) -> None:
+            emit("scanning", count, 0, current_file, progress_ratio=ratio)
+
+        total_files = _count_files_with_progress(source, exclude_patterns, scan_emit)
+        emit("comparing", 0, total_files, progress_ratio=0.0)
+        started_at = time.monotonic()
 
     count = 0
     for entry in scan_directory(source, exclude_patterns):
         count += 1
-        if progress_cb and count % 200 == 0:
-            progress_cb(count)
+        if progress_cb:
+            ratio = (count / total_files) if total_files else 0.0
+            emit("comparing", count, total_files, entry.rel_path,
+                 progress_ratio=ratio)
 
         dst = target / entry.rel_path
         if not dst.exists():
@@ -142,5 +249,6 @@ def compare(
             )
 
     if progress_cb:
-        progress_cb(count)
+        emit("comparing", count, total_files or count, finished=True,
+             progress_ratio=1.0)
     return result

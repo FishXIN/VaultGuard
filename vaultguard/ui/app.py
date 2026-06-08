@@ -12,12 +12,13 @@
 from __future__ import annotations
 
 import threading
+import time
 from pathlib import Path
 from typing import Optional
 
 import flet as ft
 
-from vaultguard.core.models import CopyProgress, DiffResult
+from vaultguard.core.models import CompareProgress, CopyProgress, DiffResult
 from vaultguard.core.service import BackupService
 from . import tokens as T
 from .helpers import fmt_eta, fmt_size, fmt_time
@@ -161,6 +162,36 @@ def _mono_text(text: str, size: int = T.TEXT_13,
     return ft.Text(text, size=size, color=color, font_family=T.FONT_MONO)
 
 
+def _progress_track(height: int = 12, width: int = 640) -> ft.Container:
+    """固定像素进度条，避免原生 ProgressBar 在桌面端渲染不可见。"""
+    track = ft.Container(
+        width=width,
+        height=height,
+        bgcolor=T.PRIMARY_BG,
+        border=ft.Border.all(1, T.PRIMARY_BG),
+        border_radius=T.RADIUS_SM,
+        clip_behavior=ft.ClipBehavior.HARD_EDGE,
+        alignment=ft.Alignment.CENTER_LEFT,
+    )
+    track.data = {"width": width, "height": height}
+    return track
+
+
+def _set_progress_value(track: ft.Container, pct: float) -> None:
+    pct = max(0.0, min(1.0, pct))
+    data = track.data or {}
+    width = int(data.get("width", 640))
+    height = int(data.get("height", 12))
+    fill_width = 0 if pct <= 0 else max(8, int(width * pct))
+    track.content = ft.Container(
+        width=min(fill_width, width),
+        height=height,
+        bgcolor=T.PRIMARY,
+        border_radius=T.RADIUS_SM,
+        animate=ft.Animation(T.DUR_FAST, T.EASE),
+    )
+
+
 # ============ 应用主体 ============
 
 class VaultGuardApp:
@@ -172,11 +203,12 @@ class VaultGuardApp:
         self.executor = None
         self.current_diff: Optional[DiffResult] = None
         self.current_task_id: Optional[int] = None
-        self.source_path = ""
-        self.target_path = ""
+        self.source_path = self.svc.settings.last_source
+        self.target_path = self.svc.settings.last_target
         self._running = False
         self._nav_index = 0
         self._nav_items: list[ft.Container] = []
+        self._compare_started_at = 0.0
 
         self._setup_page()
         self._build_layout()
@@ -318,30 +350,24 @@ class VaultGuardApp:
     def _page_header(self, title: str, subtitle: Optional[str] = None) -> ft.Column:
         items = [ft.Text(title, size=T.TEXT_28, weight=T.FW_MEDIUM,
                          color=T.TEXT_TITLE, font_family=T.FONT_SANS)]
-        if subtitle:
-            items.append(_muted_text(subtitle, size=T.TEXT_13))
         return ft.Column(items, spacing=T.SP_1, tight=True)
 
     # ========== 主页 ==========
     def _show_home(self) -> None:
         self.src_field = self._path_field(
             "源目录", self.source_path,
-            "可直接输入路径或点右侧按钮选择，例如 /Users/you/Documents",
+            "路径",
             lambda e: setattr(self, "source_path", e.control.value))
         self.dst_field = self._path_field(
             "目标目录", self.target_path,
-            "可直接输入路径或点右侧按钮选择，例如 /Volumes/Backup/MyData",
+            "路径",
             lambda e: setattr(self, "target_path", e.control.value))
 
         self._set_content(ft.Column([
-            self._page_header("本地硬盘增量备份",
-                              "文件安全第一 · 增量优先 · 先选后执行 · 可中断续传"),
+            self._page_header("本地硬盘增量备份"),
             ft.Container(height=1, bgcolor=T.BORDER_LIGHT),
             _card(
                 _section_title("选择目录"),
-                _muted_text("支持本地路径和外接硬盘，进入下一步会先做对比再执行。",
-                            size=T.TEXT_13),
-                ft.Container(height=T.SP_1),
                 ft.Row([self.src_field, self._picker_btn(True)],
                        vertical_alignment=ft.CrossAxisAlignment.END,
                        spacing=T.SP_2),
@@ -396,7 +422,9 @@ class VaultGuardApp:
         return b
 
     def _pick_dir(self, is_source: bool) -> None:
-        # 通过独立子进程弹出原生访达目录选择框，不在 Flet 线程直接碰 AppKit。
+        # 通过 VaultGuard 自身的独立子进程运行原生 NSOpenPanel：既避免在 Flet
+        # 工作线程里直接碰 AppKit 导致卡顿/闪退，又让发起面板请求的进程 main
+        # bundle 是已声明中文本地化的 VaultGuard.app，使系统面板显示中文。
         prompt = "选择源目录" if is_source else "选择目标目录"
 
         def work() -> None:
@@ -433,6 +461,11 @@ class VaultGuardApp:
             return
         Path(dst).mkdir(parents=True, exist_ok=True)
 
+        # 记住本次使用的目录，下次启动自动回填
+        self.svc.settings.last_source = src
+        self.svc.settings.last_target = dst
+        self.svc.save_settings()
+
         resumable = self.svc.find_resumable(src, dst)
         if resumable:
             undone = self.svc.db.get_pending_items(resumable["id"], only_undone=True)
@@ -443,29 +476,50 @@ class VaultGuardApp:
         self._run_compare(src, dst)
 
     def _run_compare(self, src: str, dst: str) -> None:
+        self._compare_started_at = time.monotonic()
+        self.cmp_pb_track = _progress_track(height=10)
+        _set_progress_value(self.cmp_pb_track, 0)
+        self.cmp_pct = ft.Text(
+            "统计中", size=T.TEXT_28, weight=T.FW_MEDIUM,
+            color=T.TEXT_TITLE, font_family=T.FONT_MONO)
+        self.cmp_stat = ft.Text("正在统计文件数量 ...",
+                                size=T.TEXT_13, color=T.TEXT_PRIMARY)
+        self.cmp_eta = _mono_text("预计剩余 --", size=T.TEXT_13,
+                                  color=T.TEXT_TERTIARY)
+        self.cmp_file = ft.Text(
+            "准备扫描 ...", size=T.TEXT_13, color=T.TEXT_PRIMARY,
+            overflow=ft.TextOverflow.ELLIPSIS, font_family=T.FONT_MONO)
+
         self._set_content(ft.Column([
-            self._page_header("正在对比", "递归扫描源目录并与目标目录对比 ..."),
+            self._page_header("正在对比"),
             ft.Container(height=1, bgcolor=T.BORDER_LIGHT),
             _card(
                 ft.Row([
-                    ft.ProgressRing(width=24, height=24, stroke_width=3,
-                                    color=T.PRIMARY),
-                ], alignment=ft.MainAxisAlignment.CENTER),
+                    ft.Column([
+                        self.cmp_pct,
+                        ft.Row([_badge("对比中", "running"), self.cmp_stat],
+                               spacing=T.SP_2,
+                               vertical_alignment=ft.CrossAxisAlignment.CENTER),
+                        self.cmp_eta,
+                    ], spacing=T.SP_1, expand=True),
+                ], vertical_alignment=ft.CrossAxisAlignment.START),
                 ft.Container(height=T.SP_3),
-                ft.Row([_badge("对比中", "running")],
-                       alignment=ft.MainAxisAlignment.CENTER),
-                ft.Container(height=T.SP_2),
+                self.cmp_pb_track,
                 ft.Row([
-                    _muted_text("文件较多时可能需要一会儿，请稍候。",
-                                size=T.TEXT_13),
-                ], alignment=ft.MainAxisAlignment.CENTER),
+                    ft.Icon(ft.Icons.INSERT_DRIVE_FILE_OUTLINED,
+                            size=14, color=T.TEXT_TERTIARY),
+                    self.cmp_file,
+                ], spacing=T.SP_2),
                 padding=T.SP_8,
             ),
         ], spacing=T.SP_5))
 
+        def progress_cb(prog: CompareProgress):
+            self._update_compare_progress(prog)
+
         def work():
             try:
-                diff = self.svc.compare(src, dst)
+                diff = self.svc.compare(src, dst, progress_cb=progress_cb)
                 self.current_diff = diff
                 self._show_confirm(src, dst, diff)
             except Exception as ex:
@@ -473,6 +527,35 @@ class VaultGuardApp:
                 self._show_home()
 
         threading.Thread(target=work, daemon=True).start()
+
+    def _update_compare_progress(self, prog: CompareProgress) -> None:
+        total = prog.total_files
+        pct = (prog.processed_files / total) if total else 0.0
+
+        if prog.phase == "scanning":
+            elapsed = max(time.monotonic() - self._compare_started_at, 0.0)
+            scan_pct = max(0.0, min(prog.progress_ratio, 1.0))
+            _set_progress_value(self.cmp_pb_track, scan_pct)
+            self.cmp_pct.value = f"统计 {scan_pct * 100:.0f}%"
+            self.cmp_stat.value = f"已统计 {prog.processed_files} 个文件"
+            self.cmp_eta.value = f"用时 {fmt_eta(elapsed)} · 剩余估算中"
+        else:
+            compare_pct = prog.progress_ratio if prog.progress_ratio else pct
+            _set_progress_value(self.cmp_pb_track, compare_pct)
+            self.cmp_pct.value = f"{compare_pct * 100:.0f}%"
+            self.cmp_stat.value = f"{prog.processed_files}/{total} 文件"
+            self.cmp_eta.value = f"预计剩余 {fmt_eta(prog.eta_seconds)}"
+
+        if prog.finished:
+            _set_progress_value(self.cmp_pb_track, 1.0)
+            self.cmp_pct.value = "100%"
+            self.cmp_eta.value = "预计剩余 0 秒"
+        self.cmp_file.value = prog.current_file or "..."
+
+        try:
+            self.page.update()
+        except Exception:
+            pass
 
     def _show_resume_dialog(self, task_id: int, undone: int,
                             src: str, dst: str) -> None:
@@ -559,8 +642,6 @@ class VaultGuardApp:
                             color=T.SUCCESS, size=40),
                     ft.Text("没有需要备份的文件", weight=T.FW_MEDIUM,
                             color=T.TEXT_TITLE, size=T.TEXT_16),
-                    _muted_text("目标目录已经是最新的副本。",
-                                size=T.TEXT_13),
                 ], horizontal_alignment=ft.CrossAxisAlignment.CENTER,
                    spacing=T.SP_2),
                 padding=T.SP_8,
@@ -985,13 +1066,13 @@ class VaultGuardApp:
             label="对比文件大小", value=s.compare_size,
             active_color=T.PRIMARY)
         self.f_verify_hash = ft.Switch(
-            label="复制后做 hash 完整性校验（更安全，更慢）",
+            label="Hash 校验",
             value=s.verify_hash, active_color=T.PRIMARY)
         self.f_delete_sync = ft.Switch(
-            label="删除同步（危险，默认关闭）",
+            label="删除同步",
             value=s.delete_sync, active_color=T.DANGER)
         self.f_use_recycle = ft.Switch(
-            label="删除时移入回收区而非物理删除",
+            label="移入回收区",
             value=s.use_recycle, active_color=T.PRIMARY)
         self.f_exclude = _tf(
             "排除规则（每行一个，支持通配符）",
@@ -1013,7 +1094,7 @@ class VaultGuardApp:
                                    on_click=lambda e: self._save_settings())
 
         self._set_content(ft.Column([
-            self._page_header("设置", "调整对比策略与文件安全规则"),
+            self._page_header("设置"),
             ft.Container(height=1, bgcolor=T.BORDER_LIGHT),
             ft.Container(
                 content=ft.Column([
@@ -1030,7 +1111,7 @@ class VaultGuardApp:
                         ft.Row([
                             ft.Icon(ft.Icons.WARNING_AMBER_ROUNDED,
                                     color=T.DANGER, size=16),
-                            ft.Text("删除策略（遵循文件安全原则）",
+                            ft.Text("删除策略",
                                     size=T.TEXT_14, weight=T.FW_MEDIUM,
                                     color=T.DANGER),
                         ], spacing=T.SP_2),
@@ -1074,6 +1155,14 @@ def run() -> None:
     """纯桌面软件：始终使用原生窗口运行。"""
     import os
     import sys
+
+    # 子进程模式：仅弹出原生目录选择器后退出，不启动 Flet 窗口。
+    # 该子进程的 main bundle 即 VaultGuard.app（已声明中文本地化），系统
+    # 原生面板会跟随系统语言显示中文。
+    if os.environ.get("VAULTGUARD_DIR_PICKER") == "1":
+        from .dirpicker import run_picker_process
+        run_picker_process()
+        return
 
     # 打包成 .app 后，优先使用随包内置、且已改名为 VaultGuard 的窗口客户端，
     # 使应用完全自包含、Dock 显示名为 VaultGuard，且不依赖全局缓存。

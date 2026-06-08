@@ -159,10 +159,43 @@ def test_exclude():
     print("PASS test_exclude")
 
 
+def test_scan_progress_is_continuous():
+    """统计进度：大目录扫描时必须产生多个中间进度，不能 0 直接跳 100。"""
+    d = tempfile.mkdtemp()
+    src, dst, data = Path(d)/"s", Path(d)/"t", Path(d)/"data"
+    src.mkdir(parents=True)
+    dst.mkdir(parents=True)
+    setup_tree(src, {f"f{i}.txt": "x" for i in range(260)})
+
+    events = []
+    svc = BackupService(data)
+    diff = svc.compare(str(src), str(dst), progress_cb=events.append)
+    scan_ratios = [
+        round(e.progress_ratio, 4)
+        for e in events
+        if e.phase == "scanning" and 0 < e.progress_ratio < 1
+    ]
+    unique_ratios = sorted(set(scan_ratios))
+    current_files = [
+        e.current_file for e in events
+        if e.phase == "scanning" and e.current_file
+    ]
+    assert diff.new_count == 260, f"expected 260, got {diff.new_count}"
+    assert len(unique_ratios) >= 5, f"scan progress jumped: {unique_ratios}"
+    assert unique_ratios == sorted(unique_ratios), "scan progress should be monotonic"
+    assert len(current_files) >= 260, "scan should report each current file"
+    assert any(name.endswith("f0.txt") for name in current_files), current_files[:5]
+
+    svc.close()
+    shutil.rmtree(d)
+    print("PASS test_scan_progress_is_continuous")
+
+
 if __name__ == "__main__":
     test_atomicity_and_mtime()
     test_update_detection()
     test_failure_isolation()
     test_resume()
     test_exclude()
+    test_scan_progress_is_continuous()
     print("\n=== ALL TESTS PASSED ===")

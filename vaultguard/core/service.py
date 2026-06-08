@@ -8,7 +8,7 @@ from typing import Callable, Optional
 from .config import ConfigManager, app_data_dir
 from .database import Database
 from .executor import BackupExecutor, cleanup_temp_files
-from .models import CopyProgress, DiffResult, TaskStatus
+from .models import CompareProgress, CopyProgress, DiffResult, TaskStatus
 from .scanner import compare
 
 
@@ -31,7 +31,7 @@ class BackupService:
         self,
         source: str,
         target: str,
-        progress_cb: Optional[Callable[[int], None]] = None,
+        progress_cb: Optional[Callable[[CompareProgress], None]] = None,
     ) -> DiffResult:
         """对比源与目标，返回 diff 清单（只对比不复制）。"""
         s = self.settings
