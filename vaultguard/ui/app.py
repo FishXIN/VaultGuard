@@ -329,22 +329,9 @@ class VaultGuardApp:
         for idx, (icon, label) in enumerate(nav_defs):
             self._nav_items.append(self._make_nav_item(idx, icon, label))
 
-        brand = ft.Container(
-            content=ft.Row([
-                ft.Icon(ft.Icons.SHIELD_OUTLINED, color=T.PRIMARY, size=20),
-                ft.Text("VaultGuard", size=T.TEXT_16, weight=T.FW_MEDIUM,
-                        color=T.TEXT_TITLE),
-            ], spacing=T.SP_2, tight=True),
-            height=T.HEADER_H,
-            padding=ft.Padding.symmetric(vertical=0, horizontal=T.SP_5),
-            alignment=ft.Alignment.CENTER_LEFT,
-        )
-
         sidebar = ft.Container(
             content=ft.Column(
-                [brand,
-                 ft.Container(height=1, bgcolor=T.BORDER_LIGHT),
-                 ft.Container(height=T.SP_2),
+                [ft.Container(height=T.SP_2),
                  *self._nav_items],
                 spacing=T.SP_1,
             ),
@@ -1442,7 +1429,6 @@ class VaultGuardApp:
             ], spacing=T.SP_5))
             return
 
-        rows = []
         kind_map = {
             "completed": "success",
             "failed": "danger",
@@ -1450,56 +1436,97 @@ class VaultGuardApp:
             "running": "running",
             "cancelled": "warning",
         }
-        for t in tasks:
+
+        def cell(control, *, width: Optional[int] = None,
+                 expand: Optional[int] = None,
+                 align=ft.Alignment.CENTER_LEFT) -> ft.Container:
+            return ft.Container(
+                content=control,
+                width=width,
+                expand=expand,
+                alignment=align,
+                padding=ft.Padding.symmetric(horizontal=T.SP_3, vertical=0),
+            )
+
+        def head(label: str, *, width: Optional[int] = None,
+                 expand: Optional[int] = None,
+                 align=ft.Alignment.CENTER_LEFT) -> ft.Container:
+            return cell(
+                ft.Text(label, size=T.TEXT_12, color=T.TEXT_TERTIARY,
+                        weight=T.FW_MEDIUM, overflow=ft.TextOverflow.ELLIPSIS),
+                width=width,
+                expand=expand,
+                align=align,
+            )
+
+        def table_row(t: dict, *, last: bool = False) -> ft.Container:
             kind = kind_map.get(t["status"], "running")
-            rows.append(ft.DataRow(cells=[
-                ft.DataCell(_mono_text(f"#{t['id']}",
-                                       size=T.TEXT_13, color=T.TEXT_TITLE)),
-                ft.DataCell(_badge(t["status"], kind)),
-                ft.DataCell(_mono_text(str(t["copied_files"]),
-                                       color=T.SUCCESS)),
-                ft.DataCell(_mono_text(str(t["failed_files"]),
-                                       color=T.DANGER if t["failed_files"]
-                                       else T.TEXT_TERTIARY)),
-                ft.DataCell(ft.Text(fmt_time(t["start_time"]),
-                                    size=T.TEXT_13, color=T.TEXT_PRIMARY)),
-                ft.DataCell(ft.IconButton(
+            failed_color = T.DANGER if t["failed_files"] else T.TEXT_TERTIARY
+            detail_btn = ft.IconButton(
                     icon=ft.Icons.ARTICLE_OUTLINED,
                     icon_color=T.PRIMARY,
                     icon_size=18,
+                    width=32,
+                    height=32,
                     tooltip="查看详情",
                     on_click=self._safe(
                         "查看任务详情",
-                        lambda e, tid=t["id"]: self._show_task_detail(tid)))),
-            ]))
+                        lambda e, tid=t["id"]: self._show_task_detail(tid)))
+            return ft.Container(
+                content=ft.Row([
+                    cell(_mono_text(f"#{t['id']}", size=T.TEXT_13,
+                                    color=T.TEXT_TITLE), width=70),
+                    cell(_badge(t["status"], kind), expand=2),
+                    cell(_mono_text(str(t["copied_files"]), color=T.SUCCESS),
+                         width=82),
+                    cell(_mono_text(str(t["failed_files"]), color=failed_color),
+                         width=82),
+                    cell(ft.Text(fmt_time(t["start_time"]), size=T.TEXT_13,
+                                 color=T.TEXT_PRIMARY,
+                                 overflow=ft.TextOverflow.ELLIPSIS),
+                         expand=3),
+                    cell(detail_btn, width=70, align=ft.Alignment.CENTER),
+                ], spacing=0, expand=True,
+                   vertical_alignment=ft.CrossAxisAlignment.CENTER),
+                height=58,
+                border=None if last else ft.Border(
+                    bottom=ft.BorderSide(1, T.BORDER)),
+            )
 
-        def col(label):
-            return ft.DataColumn(
-                ft.Text(label, size=T.TEXT_12,
-                        color=T.TEXT_TERTIARY, weight=T.FW_MEDIUM))
-
-        table = ft.DataTable(
-            columns=[col("ID"), col("状态"), col("复制"),
-                     col("失败"), col("开始时间"), col("详情")],
-            rows=rows,
-            heading_row_color=T.FILL,
-            heading_row_height=42,
-            data_row_color={"hovered": T.FILL},
-            divider_thickness=1,
+        table_header = ft.Container(
+            content=ft.Row([
+                head("ID", width=70),
+                head("状态", expand=2),
+                head("复制", width=82),
+                head("失败", width=82),
+                head("开始时间", expand=3),
+                head("详情", width=70, align=ft.Alignment.CENTER),
+            ], spacing=0, expand=True,
+               vertical_alignment=ft.CrossAxisAlignment.CENTER),
+            height=42,
+            bgcolor=T.FILL,
+            border=ft.Border(bottom=ft.BorderSide(1, T.BORDER)),
+        )
+        row_controls = [
+            table_row(t, last=i == len(tasks) - 1)
+            for i, t in enumerate(tasks)
+        ]
+        table = ft.Column([
+            table_header,
+            ft.ListView(row_controls, spacing=0, expand=True, padding=0),
+        ], spacing=0, expand=True)
+        history_panel = ft.Container(
+            content=table,
+            bgcolor=T.BG,
             border_radius=T.RADIUS_MD,
-            column_spacing=28,
+            border=ft.Border.all(1, T.BORDER),
+            clip_behavior=ft.ClipBehavior.HARD_EDGE,
+            expand=True,
         )
         self._set_content(ft.Column([
             self._page_header("历史记录", f"共 {len(tasks)} 条任务记录"),
             ft.Container(height=1, bgcolor=T.BORDER_LIGHT),
-            ft.Container(
-                content=ft.Column([table], scroll=ft.ScrollMode.AUTO),
-                bgcolor=T.BG,
-                border_radius=T.RADIUS_MD,
-                padding=T.SP_4,
-                border=ft.Border.all(1, T.BORDER),
-                expand=True,
-            ),
+            history_panel,
         ], spacing=T.SP_5, expand=True))
 
     def _show_task_detail(self, task_id: int) -> None:
