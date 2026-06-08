@@ -1,161 +1,109 @@
 """VaultGuard 设计系统在 Flet 桌面端的 Token 映射。
 
-来源：VaultGuard-Design-System.md（v1.0）。
+来源：VaultGuard-Design-System.md（v2.0 · 火山引擎 / Arco 极简风）。
 由于 Flet 不支持 CSS Variables，这里把规范中的 token 转成 Flet/Python 可消费的常量，
 保持名称一致，便于跨端比对。
+
+设计基准：黑白灰为主、单一克制蓝、小圆角（4–6px）、极轻阴影（仅浮层）、零多余特效。
 """
 from __future__ import annotations
 
 import flet as ft
 
 
-# ============ 1. Color ============
-# 品牌主色 / 渐变端点
-BLUE_PRIMARY = "#3370FF"
-BLUE_START = "#3B6EF6"
-CYAN_END = "#1EC6D6"
+# ============ 1. 颜色 ============
+# 1.1 主色（唯一强调色，火山引擎蓝）
+PRIMARY = "#165DFF"
+PRIMARY_HOVER = "#4080FF"
+PRIMARY_ACTIVE = "#0E42D2"
+PRIMARY_BG = "#E8F3FF"  # 浅蓝底：选中行、轻量标签
 
-# 蓝色阶
-BLUE_50 = "#EBF1FF"
-BLUE_100 = "#D6E3FF"
-BLUE_200 = "#ADC6FF"
-BLUE_300 = "#84A9FF"
-BLUE_400 = "#5B85F8"
-BLUE_500 = "#3370FF"
-BLUE_600 = "#2A5AD9"
-BLUE_700 = "#1F44B3"
-BLUE_800 = "#15308C"
-BLUE_900 = "#0B1C66"
+# 1.2 中性色（主体）
+TEXT_TITLE = "#1D2129"
+TEXT_PRIMARY = "#4E5969"
+TEXT_TERTIARY = "#86909C"
+TEXT_DISABLED = "#C9CDD4"
 
-# 青色辅助
-CYAN_50 = "#E6FAFC"
-CYAN_200 = "#9DEAF0"
-CYAN_400 = "#4FD6E2"
-CYAN_500 = "#1EC6D6"
-CYAN_700 = "#14939E"
+BORDER = "#E5E6EB"
+BORDER_LIGHT = "#F2F3F5"
+FILL = "#F7F8FA"
+FILL_HOVER = "#F2F3F5"
+BG = "#FFFFFF"
 
-# 中性
-WHITE = "#FFFFFF"
-BG_LIGHT = "#F7F9FC"
-BG_COOL = "#E8F1FF"
-GRAY_100 = "#F1F3F7"
-GRAY_200 = "#E4E8F0"
-GRAY_300 = "#CBD2E0"
-GRAY_400 = "#9AA5BC"
-GRAY_500 = "#6B7693"
-GRAY_700 = "#3D4663"
-GRAY_900 = "#1A2138"
-INK = "#0E1428"
-
-# 语义色
-SUCCESS = "#00C566"
-WARNING = "#FF9D2B"
-DANGER = "#FF4D5E"
-SYNCING = "#3370FF"
-SUCCESS_BG = "#E6FAF0"
-WARNING_BG = "#FFF4E6"
-DANGER_BG = "#FFEBED"
-SYNCING_BG = BLUE_50
+# 1.3 状态色（备份语义，低饱和）
+SUCCESS = "#00B42A"
+SUCCESS_BG = "#E8FFEA"
+WARNING = "#FF7D00"
+WARNING_BG = "#FFF7E8"
+DANGER = "#F53F3F"
+DANGER_BG = "#FFECE8"
+RUNNING = "#165DFF"
+RUNNING_BG = "#E8F3FF"
 
 
-def gradient_brand() -> ft.LinearGradient:
-    """品牌主渐变（135°）"""
-    return ft.LinearGradient(
-        begin=ft.Alignment.TOP_LEFT,
-        end=ft.Alignment.BOTTOM_RIGHT,
-        colors=[BLUE_START, CYAN_END],
-    )
+# ============ 2. 字体 ============
+FONT_SANS = "-apple-system, BlinkMacSystemFont, Segoe UI, PingFang SC, Roboto, sans-serif"
+FONT_MONO = "SF Mono, JetBrains Mono, Consolas, Menlo, monospace"  # 路径/容量/速率
 
-
-def gradient_brand_soft() -> ft.LinearGradient:
-    """品牌主渐变 hover 浅色版"""
-    return ft.LinearGradient(
-        begin=ft.Alignment.TOP_LEFT,
-        end=ft.Alignment.BOTTOM_RIGHT,
-        colors=["#5B85F8", CYAN_400],
-    )
-
-
-# ============ 2. Typography ============
-# 字号阶梯（1.25 比例）
-TEXT_XS = 12
-TEXT_SM = 14
-TEXT_BASE = 16
-TEXT_LG = 20
-TEXT_XL = 25
-TEXT_2XL = 31
-TEXT_3XL = 39
-TEXT_4XL = 49
+# 字号阶梯（桌面密度，紧凑克制）
+TEXT_12 = 12  # 标签、辅助
+TEXT_13 = 13  # 次要正文 / 表格
+TEXT_14 = 14  # 正文基准
+TEXT_16 = 16  # 小标题
+TEXT_20 = 20  # 区块标题
+TEXT_28 = 28  # 页面主标题（最大）
 
 FW_REGULAR = ft.FontWeight.W_400
-FW_MEDIUM = ft.FontWeight.W_500
+FW_MEDIUM = ft.FontWeight.W_500  # 标题/强调默认用 medium
 FW_SEMIBOLD = ft.FontWeight.W_600
-FW_BOLD = ft.FontWeight.W_700
-
-# 字体族（与设计规范一致；Flet 走系统 fallback）
-FONT_SANS = "Inter, PingFang SC, -apple-system, sans-serif"
-FONT_MONO = "JetBrains Mono, SF Mono, Consolas, monospace"
 
 
-# ============ 3. Spacing & Radius ============
-SPACE_1 = 4
-SPACE_2 = 8
-SPACE_3 = 12
-SPACE_4 = 16
-SPACE_5 = 24
-SPACE_6 = 32
-SPACE_7 = 48
-SPACE_8 = 64
+# ============ 3. 间距与圆角 ============
+# 间距 4px 基准
+SP_1 = 4
+SP_2 = 8
+SP_3 = 12
+SP_4 = 16
+SP_5 = 20
+SP_6 = 24
+SP_8 = 32
+SP_10 = 40
 
-RADIUS_SM = 8
-RADIUS_MD = 12
-RADIUS_LG = 16
-RADIUS_XL = 24
-RADIUS_2XL = 32
-RADIUS_FULL = 9999
+# 圆角——小而克制（Arco 风格）
+RADIUS_SM = 2  # 标签、输入框内元素
+RADIUS = 4     # 按钮、输入框、默认
+RADIUS_MD = 6  # 卡片 / 弹窗
+RADIUS_LG = 8  # 大容器（少用）
 
 
-# ============ 4. Elevation ============
-# Flet 的 BoxShadow 是单层；此处用同色调蓝阴影近似 CSS 多层阴影。
+# ============ 4. 阴影（极轻，仅浮层使用）============
 def shadow_sm() -> ft.BoxShadow:
+    """下拉、tooltip。"""
     return ft.BoxShadow(
-        spread_radius=0, blur_radius=8,
-        color=ft.Colors.with_opacity(0.08, "#0E245A"),
-        offset=ft.Offset(0, 2),
+        spread_radius=0, blur_radius=4,
+        color=ft.Colors.with_opacity(0.06, "#000000"),
+        offset=ft.Offset(0, 1),
     )
 
 
 def shadow_md() -> ft.BoxShadow:
+    """弹窗、抽屉。"""
     return ft.BoxShadow(
-        spread_radius=0, blur_radius=16,
-        color=ft.Colors.with_opacity(0.10, "#0E245A"),
-        offset=ft.Offset(0, 4),
+        spread_radius=0, blur_radius=8,
+        color=ft.Colors.with_opacity(0.08, "#000000"),
+        offset=ft.Offset(0, 2),
     )
 
 
-def shadow_lg() -> ft.BoxShadow:
-    return ft.BoxShadow(
-        spread_radius=0, blur_radius=32,
-        color=ft.Colors.with_opacity(0.12, "#0E245A"),
-        offset=ft.Offset(0, 8),
-    )
+# ============ 5. 布局 ============
+SIDEBAR_W = 200
+HEADER_H = 56
 
 
-def glow_brand() -> ft.BoxShadow:
-    """CTA hover 时的品牌发光"""
-    return ft.BoxShadow(
-        spread_radius=0, blur_radius=24,
-        color=ft.Colors.with_opacity(0.35, BLUE_500),
-        offset=ft.Offset(0, 8),
-    )
-
-
-# ============ 5. Motion ============
+# ============ 6. 动效（极简）============
 # Flet 的 ft.Animation 单位是毫秒
-DUR_FAST = 180
-DUR_BASE = 300
-DUR_SLOW = 550
+DUR_FAST = 150  # hover / 颜色过渡
+DUR_BASE = 250  # 弹窗 / 抽屉出现
 
-EASE_OUT = ft.AnimationCurve.EASE_OUT_CUBIC
-EASE_IN_OUT = ft.AnimationCurve.EASE_IN_OUT
+EASE = ft.AnimationCurve.EASE_IN_OUT  # 标准缓动 cubic-bezier(.4,0,.2,1)
 EASE_LINEAR = ft.AnimationCurve.LINEAR

@@ -1,23 +1,23 @@
 """VaultGuard Flet 图形界面（模块 5 + 6）。
 
-视觉与交互严格遵循 VaultGuard-Design-System.md：
-- 色彩：品牌蓝 #3370FF + 渐变 #3B6EF6 → #1EC6D6
-- 圆角：卡片 32 / 输入框 16 / 按钮胶囊
-- 阴影：带品牌蓝色调的多层柔光阴影
-- 动效：克制、平滑（180/300/550ms 三档），EASE_OUT_CUBIC 主力
-- 进度条：品牌渐变 + 流光（数据流动隐喻）
-- 状态徽章：success / warning / danger / syncing
+视觉与交互严格遵循 VaultGuard-Design-System.md（v2.0 · 火山引擎 / Arco 极简风）：
+- 色彩：黑白灰为主（≈90%）+ 单一克制蓝 #165DFF（≈8%）+ 低饱和状态色（<2%）
+- 圆角：按钮/输入框 4 / 卡片/弹窗 6 / 大容器 8，无大圆角
+- 阴影：平铺内容用边框分隔，阴影仅给浮层（弹窗）
+- 字体：14px 正文，标题用 medium(500)；路径/容量/速率用等宽字体
+- 动效：仅颜色过渡 / 淡入，≤250ms，无发光、无流光、无渐变、无回弹
+- 进度条：纯色按真实 width 推进，不做装饰动画
+- 状态标签：success / warning / danger / running
 """
 from __future__ import annotations
 
 import threading
-import time
 from pathlib import Path
 from typing import Optional
 
 import flet as ft
 
-from vaultguard.core.models import CopyProgress, DiffResult, TaskStatus
+from vaultguard.core.models import CopyProgress, DiffResult
 from vaultguard.core.service import BackupService
 from . import tokens as T
 from .helpers import fmt_eta, fmt_size, fmt_time
@@ -25,147 +25,140 @@ from .helpers import fmt_eta, fmt_size, fmt_time
 
 # ============ 通用 UI 工厂 ============
 
-def _heading_gradient(text: str, size: int = T.TEXT_3XL) -> ft.ShaderMask:
-    """渐变文字标题（对应规范 §2.4 .vg-heading-gradient）。"""
-    return ft.ShaderMask(
-        content=ft.Text(text, size=size, weight=T.FW_BOLD,
-                        color=T.WHITE, font_family=T.FONT_SANS),
-        blend_mode=ft.BlendMode.SRC_IN,
-        shader=ft.LinearGradient(
-            begin=ft.Alignment.TOP_LEFT,
-            end=ft.Alignment.BOTTOM_RIGHT,
-            colors=[T.BLUE_START, T.CYAN_END],
-        ),
-    )
-
-
-def _badge(label: str, kind: str = "syncing") -> ft.Container:
-    """状态徽章（规范 §5.3 .vg-badge）。kind ∈ success/warning/danger/syncing。"""
+def _badge(label: str, kind: str = "running") -> ft.Container:
+    """状态标签（规范 §5.3 .vg-tag）。kind ∈ success/warning/danger/running。"""
     palette = {
         "success": (T.SUCCESS, T.SUCCESS_BG),
         "warning": (T.WARNING, T.WARNING_BG),
         "danger": (T.DANGER, T.DANGER_BG),
-        "syncing": (T.SYNCING, T.SYNCING_BG),
+        "running": (T.RUNNING, T.RUNNING_BG),
     }
-    fg, bg = palette.get(kind, palette["syncing"])
+    fg, bg = palette.get(kind, palette["running"])
     return ft.Container(
         content=ft.Row([
-            ft.Container(width=6, height=6, bgcolor=fg,
-                         border_radius=T.RADIUS_FULL),
-            ft.Text(label, size=T.TEXT_XS, weight=T.FW_SEMIBOLD, color=fg),
-        ], spacing=6, tight=True),
+            ft.Container(width=6, height=6, bgcolor=fg, border_radius=3),
+            ft.Text(label, size=T.TEXT_12, weight=T.FW_MEDIUM, color=fg),
+        ], spacing=T.SP_1, tight=True),
         bgcolor=bg,
-        border_radius=T.RADIUS_FULL,
-        padding=ft.Padding.symmetric(vertical=4, horizontal=12),
+        border_radius=T.RADIUS_SM,
+        padding=ft.Padding.symmetric(vertical=0, horizontal=T.SP_2),
+        height=22,
+        alignment=ft.Alignment.CENTER,
     )
 
 
 def _primary_button(text: str, icon=None, on_click=None,
                     disabled: bool = False) -> ft.Container:
-    """品牌渐变 CTA 按钮（规范 §5.1 .vg-btn--primary）。
+    """主按钮：实心蓝（规范 §5.1 .vg-btn--primary）。
 
-    用 Container + GestureDetector 实现 LinearGradient 背景；
-    Flet 的 FilledButton 不支持渐变填充。
+    无上浮、无 glow、无 scale；hover 仅变背景色。
     """
     children = []
     if icon is not None:
-        children.append(ft.Icon(icon, color=T.WHITE, size=18))
-    children.append(ft.Text(text, color=T.WHITE,
-                            size=T.TEXT_BASE, weight=T.FW_SEMIBOLD))
-    inner = ft.Row(children, spacing=8, tight=True,
+        children.append(ft.Icon(icon, color=T.BG, size=16))
+    children.append(ft.Text(text, color=T.BG,
+                            size=T.TEXT_14, weight=T.FW_MEDIUM))
+    inner = ft.Row(children, spacing=T.SP_2, tight=True,
                    alignment=ft.MainAxisAlignment.CENTER,
                    vertical_alignment=ft.CrossAxisAlignment.CENTER)
     btn = ft.Container(
         content=inner,
-        gradient=T.gradient_brand(),
-        border_radius=T.RADIUS_FULL,
-        padding=ft.Padding.symmetric(vertical=0, horizontal=28),
-        height=48,
+        bgcolor=T.TEXT_DISABLED if disabled else T.PRIMARY,
+        border_radius=T.RADIUS,
+        padding=ft.Padding.symmetric(vertical=0, horizontal=T.SP_4),
+        height=32,
         alignment=ft.Alignment.CENTER,
-        shadow=T.shadow_md(),
-        animate=ft.Animation(T.DUR_FAST, T.EASE_OUT),
-        animate_scale=ft.Animation(T.DUR_FAST, T.EASE_OUT),
+        animate=ft.Animation(T.DUR_FAST, T.EASE),
         on_click=(None if disabled else on_click),
-        opacity=0.45 if disabled else 1.0,
         ink=False,
     )
 
     def _hover(e: ft.HoverEvent) -> None:
         if disabled:
             return
-        if e.data == "true":
-            btn.gradient = T.gradient_brand_soft()
-            btn.shadow = T.glow_brand()
-            btn.scale = ft.Scale(1.02)
-        else:
-            btn.gradient = T.gradient_brand()
-            btn.shadow = T.shadow_md()
-            btn.scale = ft.Scale(1.0)
+        btn.bgcolor = T.PRIMARY_HOVER if e.data == "true" else T.PRIMARY
+        btn.update()
+
+    if not disabled:
+        btn.on_hover = _hover
+    return btn
+
+
+def _default_button(text: str, icon=None, on_click=None,
+                    danger: bool = False) -> ft.Container:
+    """次按钮：描边（规范 §5.1 .vg-btn--default）。
+
+    hover 仅变边框/文字色为主色；danger 变体用危险色描边。
+    """
+    base_color = T.DANGER if danger else T.TEXT_PRIMARY
+    base_border = T.DANGER if danger else T.BORDER
+    hover_color = T.DANGER if danger else T.PRIMARY
+
+    label = ft.Text(text, color=base_color, size=T.TEXT_14, weight=T.FW_MEDIUM)
+    children = []
+    if icon is not None:
+        children.append(ft.Icon(icon, color=base_color, size=16))
+    children.append(label)
+    inner = ft.Row(children, spacing=T.SP_2, tight=True,
+                   alignment=ft.MainAxisAlignment.CENTER,
+                   vertical_alignment=ft.CrossAxisAlignment.CENTER)
+    icon_ctrl = children[0] if icon is not None else None
+
+    btn = ft.Container(
+        content=inner,
+        bgcolor=T.BG,
+        border=ft.Border.all(1, base_border),
+        border_radius=T.RADIUS,
+        padding=ft.Padding.symmetric(vertical=0, horizontal=T.SP_4),
+        height=32,
+        alignment=ft.Alignment.CENTER,
+        animate=ft.Animation(T.DUR_FAST, T.EASE),
+        on_click=on_click,
+        ink=False,
+    )
+
+    def _hover(e: ft.HoverEvent) -> None:
+        on = e.data == "true"
+        col = hover_color if on else base_color
+        bdr = hover_color if on else base_border
+        btn.border = ft.Border.all(1, bdr)
+        label.color = col
+        if icon_ctrl is not None:
+            icon_ctrl.color = col
         btn.update()
 
     btn.on_hover = _hover
     return btn
 
 
-def _ghost_button(text: str, icon=None, on_click=None,
-                  danger: bool = False) -> ft.OutlinedButton:
-    """次按钮（规范 §5.1 .vg-btn--ghost）。"""
-    color = T.DANGER if danger else T.BLUE_500
-    border = ft.BorderSide(1.5, T.DANGER if danger else T.BLUE_200)
-    return ft.OutlinedButton(
-        text=text,
-        icon=icon,
-        on_click=on_click,
-        style=ft.ButtonStyle(
-            color=color,
-            side=border,
-            shape=ft.RoundedRectangleBorder(radius=T.RADIUS_FULL),
-            padding=ft.Padding.symmetric(vertical=14, horizontal=22),
-            text_style=ft.TextStyle(size=T.TEXT_SM, weight=T.FW_SEMIBOLD),
-        ),
-    )
-
-
-def _card(*controls, padding: int = T.SPACE_6,
+def _card(*controls, padding: int = T.SP_5,
           expand: Optional[bool] = None) -> ft.Container:
-    """卡片容器（规范 §5.2 .vg-card）。"""
-    column = ft.Column(list(controls), spacing=T.SPACE_3, tight=True)
+    """卡片 / 面板（规范 §5.2 .vg-card）：边框分隔，无阴影。"""
+    column = ft.Column(list(controls), spacing=T.SP_3, tight=True)
     return ft.Container(
         content=column,
-        bgcolor=T.WHITE,
-        border_radius=T.RADIUS_2XL,
+        bgcolor=T.BG,
+        border_radius=T.RADIUS_MD,
         padding=padding,
-        border=ft.Border.all(1, T.GRAY_100),
-        shadow=T.shadow_md(),
-        animate=ft.Animation(T.DUR_BASE, T.EASE_OUT),
+        border=ft.Border.all(1, T.BORDER),
         expand=expand,
     )
 
 
 def _section_title(text: str) -> ft.Text:
-    return ft.Text(text, size=T.TEXT_LG, weight=T.FW_SEMIBOLD,
-                   color=T.GRAY_900, font_family=T.FONT_SANS)
+    return ft.Text(text, size=T.TEXT_16, weight=T.FW_MEDIUM,
+                   color=T.TEXT_TITLE, font_family=T.FONT_SANS)
 
 
-def _muted_text(text: str, size: int = T.TEXT_SM) -> ft.Text:
-    return ft.Text(text, size=size, color=T.GRAY_500,
+def _muted_text(text: str, size: int = T.TEXT_13) -> ft.Text:
+    return ft.Text(text, size=size, color=T.TEXT_TERTIARY,
                    font_family=T.FONT_SANS)
 
 
-def _mono_text(text: str, size: int = T.TEXT_SM,
-               color: str = T.GRAY_700) -> ft.Text:
-    """数据/容量/速率展示（规范 §2.1 推荐 mono 字体）。"""
+def _mono_text(text: str, size: int = T.TEXT_13,
+               color: str = T.TEXT_PRIMARY) -> ft.Text:
+    """数据/容量/速率展示（规范 §2 推荐 mono 字体）。"""
     return ft.Text(text, size=size, color=color, font_family=T.FONT_MONO)
-
-
-def _progress_track(height: int = 8) -> ft.Container:
-    """流光渐变进度条容器（规范 §5.4）；通过覆盖一个 gradient bar 实现。"""
-    return ft.Container(
-        bgcolor=T.GRAY_200,
-        height=height,
-        border_radius=T.RADIUS_FULL,
-        clip_behavior=ft.ClipBehavior.HARD_EDGE,
-    )
 
 
 # ============ 应用主体 ============
@@ -182,6 +175,8 @@ class VaultGuardApp:
         self.source_path = ""
         self.target_path = ""
         self._running = False
+        self._nav_index = 0
+        self._nav_items: list[ft.Container] = []
 
         self._setup_page()
         self._build_layout()
@@ -191,10 +186,10 @@ class VaultGuardApp:
     def _setup_page(self) -> None:
         p = self.page
         p.title = "VaultGuard · 增量备份"
-        p.bgcolor = T.BG_LIGHT
+        p.bgcolor = T.BG
         p.theme_mode = ft.ThemeMode.LIGHT
         p.theme = ft.Theme(
-            color_scheme_seed=T.BLUE_PRIMARY,
+            color_scheme_seed=T.PRIMARY,
             font_family="-apple-system",
             visual_density=ft.VisualDensity.COMFORTABLE,
         )
@@ -205,57 +200,101 @@ class VaultGuardApp:
         p.padding = 0
 
     def _build_layout(self) -> None:
-        # 左侧导航（卡片化、大圆角、品牌蓝选中态）
-        self.nav = ft.NavigationRail(
-            selected_index=0,
-            label_type=ft.NavigationRailLabelType.ALL,
-            min_width=96,
-            min_extended_width=180,
-            bgcolor=T.WHITE,
-            indicator_color=T.BLUE_50,
-            indicator_shape=ft.RoundedRectangleBorder(radius=T.RADIUS_LG),
-            selected_label_text_style=ft.TextStyle(
-                color=T.BLUE_500, weight=T.FW_SEMIBOLD, size=T.TEXT_SM),
-            unselected_label_text_style=ft.TextStyle(
-                color=T.GRAY_500, size=T.TEXT_SM),
-            destinations=[
-                ft.NavigationRailDestination(
-                    icon=ft.Icons.HOME_OUTLINED,
-                    selected_icon=ft.Icons.HOME_ROUNDED, label="主页"),
-                ft.NavigationRailDestination(
-                    icon=ft.Icons.HISTORY_OUTLINED,
-                    selected_icon=ft.Icons.HISTORY_ROUNDED, label="历史"),
-                ft.NavigationRailDestination(
-                    icon=ft.Icons.SETTINGS_OUTLINED,
-                    selected_icon=ft.Icons.SETTINGS_ROUNDED, label="设置"),
-            ],
-            on_change=self._on_nav_change,
+        # 左侧固定侧边导航（宽 200px，选中项左侧 2px 蓝条 + 浅蓝底 + 蓝色文字）
+        nav_defs = [
+            (ft.Icons.HOME_OUTLINED, "主页"),
+            (ft.Icons.HISTORY_OUTLINED, "历史"),
+            (ft.Icons.SETTINGS_OUTLINED, "设置"),
+        ]
+        self._nav_items = []
+        for idx, (icon, label) in enumerate(nav_defs):
+            self._nav_items.append(self._make_nav_item(idx, icon, label))
+
+        brand = ft.Container(
+            content=ft.Row([
+                ft.Icon(ft.Icons.SHIELD_OUTLINED, color=T.PRIMARY, size=20),
+                ft.Text("VaultGuard", size=T.TEXT_16, weight=T.FW_MEDIUM,
+                        color=T.TEXT_TITLE),
+            ], spacing=T.SP_2, tight=True),
+            height=T.HEADER_H,
+            padding=ft.Padding.symmetric(vertical=0, horizontal=T.SP_5),
+            alignment=ft.Alignment.CENTER_LEFT,
         )
 
-        nav_card = ft.Container(
-            content=self.nav,
-            bgcolor=T.WHITE,
-            border_radius=ft.BorderRadius.only(top_right=T.RADIUS_2XL,
-                                                bottom_right=T.RADIUS_2XL),
-            shadow=T.shadow_sm(),
+        sidebar = ft.Container(
+            content=ft.Column(
+                [brand,
+                 ft.Container(height=1, bgcolor=T.BORDER_LIGHT),
+                 ft.Container(height=T.SP_2),
+                 *self._nav_items],
+                spacing=T.SP_1,
+            ),
+            width=T.SIDEBAR_W,
+            bgcolor=T.BG,
+            border=ft.Border(right=ft.BorderSide(1, T.BORDER)),
         )
 
         self.content = ft.Container(
             expand=True,
-            padding=ft.Padding.symmetric(vertical=T.SPACE_5, horizontal=T.SPACE_6),
-            bgcolor=T.BG_LIGHT,
+            padding=T.SP_6,
+            bgcolor=T.BG,
         )
 
         self.page.add(
             ft.Row(
-                [nav_card, self.content],
+                [sidebar, self.content],
                 expand=True,
                 spacing=0,
             )
         )
 
-    def _on_nav_change(self, e) -> None:
-        idx = e.control.selected_index
+    def _make_nav_item(self, idx: int, icon, label: str) -> ft.Container:
+        active = idx == self._nav_index
+        fg = T.PRIMARY if active else T.TEXT_PRIMARY
+        item = ft.Container(
+            content=ft.Row([
+                ft.Icon(icon, color=fg, size=18),
+                ft.Text(label, size=T.TEXT_14, weight=T.FW_MEDIUM, color=fg),
+            ], spacing=T.SP_3, tight=True),
+            height=40,
+            padding=ft.Padding.only(left=T.SP_5 - 2, right=T.SP_4),
+            margin=ft.Padding.symmetric(vertical=0, horizontal=T.SP_2),
+            bgcolor=T.PRIMARY_BG if active else None,
+            border=ft.Border(left=ft.BorderSide(
+                2, T.PRIMARY if active else "#00000000")),
+            border_radius=T.RADIUS,
+            alignment=ft.Alignment.CENTER_LEFT,
+            animate=ft.Animation(T.DUR_FAST, T.EASE),
+            on_click=lambda e, i=idx: self._on_nav_click(i),
+        )
+        item.data = (idx, icon, label)
+
+        def _hover(e: ft.HoverEvent, c=item) -> None:
+            i = c.data[0]
+            if i == self._nav_index:
+                return
+            c.bgcolor = T.FILL if e.data == "true" else None
+            c.update()
+
+        item.on_hover = _hover
+        return item
+
+    def _refresh_nav(self) -> None:
+        for c in self._nav_items:
+            idx, icon, label = c.data
+            active = idx == self._nav_index
+            fg = T.PRIMARY if active else T.TEXT_PRIMARY
+            row = c.content
+            row.controls[0].color = fg
+            row.controls[1].color = fg
+            c.bgcolor = T.PRIMARY_BG if active else None
+            c.border = ft.Border(left=ft.BorderSide(
+                2, T.PRIMARY if active else "#00000000"))
+        self.page.update()
+
+    def _on_nav_click(self, idx: int) -> None:
+        self._nav_index = idx
+        self._refresh_nav()
         if idx == 0:
             self._show_home()
         elif idx == 1:
@@ -270,111 +309,94 @@ class VaultGuardApp:
     def _snack(self, msg: str, error: bool = False) -> None:
         self.page.open(
             ft.SnackBar(
-                ft.Text(msg, color=T.WHITE, weight=T.FW_MEDIUM),
+                ft.Text(msg, color=T.BG, weight=T.FW_MEDIUM),
                 bgcolor=T.DANGER if error else T.SUCCESS,
-                shape=ft.RoundedRectangleBorder(radius=T.RADIUS_LG),
+                shape=ft.RoundedRectangleBorder(radius=T.RADIUS),
             )
         )
 
     def _page_header(self, title: str, subtitle: Optional[str] = None) -> ft.Column:
-        items = [_heading_gradient(title, size=T.TEXT_2XL)]
+        items = [ft.Text(title, size=T.TEXT_28, weight=T.FW_MEDIUM,
+                         color=T.TEXT_TITLE, font_family=T.FONT_SANS)]
         if subtitle:
-            items.append(_muted_text(subtitle, size=T.TEXT_SM))
-        return ft.Column(items, spacing=T.SPACE_1, tight=True)
+            items.append(_muted_text(subtitle, size=T.TEXT_13))
+        return ft.Column(items, spacing=T.SP_1, tight=True)
 
     # ========== 主页 ==========
     def _show_home(self) -> None:
-        self.src_field = ft.TextField(
-            label="源目录",
-            value=self.source_path,
-            hint_text="可直接输入路径或点右侧按钮选择，例如 /Users/you/Documents",
-            on_change=lambda e: setattr(self, "source_path", e.control.value),
-            expand=True,
-            border_radius=T.RADIUS_LG,
-            border_color=T.GRAY_200,
-            focused_border_color=T.BLUE_500,
-            cursor_color=T.BLUE_500,
-            text_size=T.TEXT_SM,
-            content_padding=ft.Padding.symmetric(vertical=14, horizontal=16),
-        )
-        self.dst_field = ft.TextField(
-            label="目标目录",
-            value=self.target_path,
-            hint_text="可直接输入路径或点右侧按钮选择，例如 /Volumes/Backup/MyData",
-            on_change=lambda e: setattr(self, "target_path", e.control.value),
-            expand=True,
-            border_radius=T.RADIUS_LG,
-            border_color=T.GRAY_200,
-            focused_border_color=T.BLUE_500,
-            cursor_color=T.BLUE_500,
-            text_size=T.TEXT_SM,
-            content_padding=ft.Padding.symmetric(vertical=14, horizontal=16),
-        )
-
-        def _picker_btn(is_source: bool) -> ft.Container:
-            b = ft.Container(
-                content=ft.Icon(ft.Icons.FOLDER_OPEN_ROUNDED,
-                                color=T.BLUE_500, size=20),
-                width=44, height=44,
-                bgcolor=T.BLUE_50,
-                border_radius=T.RADIUS_MD,
-                alignment=ft.Alignment.CENTER,
-                tooltip="选择源目录" if is_source else "选择目标目录",
-                on_click=lambda e, s=is_source: self._pick_dir(s),
-                animate=ft.Animation(T.DUR_FAST, T.EASE_OUT),
-            )
-
-            def _hover(e: ft.HoverEvent, ctrl=b) -> None:
-                ctrl.bgcolor = T.BLUE_100 if e.data == "true" else T.BLUE_50
-                ctrl.update()
-
-            b.on_hover = _hover
-            return b
-
-        feature_chip = lambda txt, ic: ft.Container(
-            content=ft.Row([
-                ft.Icon(ic, color=T.BLUE_500, size=14),
-                ft.Text(txt, size=T.TEXT_XS,
-                        color=T.GRAY_700, weight=T.FW_MEDIUM),
-            ], spacing=6, tight=True),
-            bgcolor=T.BLUE_50,
-            border_radius=T.RADIUS_FULL,
-            padding=ft.Padding.symmetric(vertical=6, horizontal=12),
-        )
+        self.src_field = self._path_field(
+            "源目录", self.source_path,
+            "可直接输入路径或点右侧按钮选择，例如 /Users/you/Documents",
+            lambda e: setattr(self, "source_path", e.control.value))
+        self.dst_field = self._path_field(
+            "目标目录", self.target_path,
+            "可直接输入路径或点右侧按钮选择，例如 /Volumes/Backup/MyData",
+            lambda e: setattr(self, "target_path", e.control.value))
 
         self._set_content(ft.Column([
-            self._page_header("VaultGuard · 本地硬盘增量备份",
+            self._page_header("本地硬盘增量备份",
                               "文件安全第一 · 增量优先 · 先选后执行 · 可中断续传"),
-            ft.Row([
-                feature_chip("文件安全", ft.Icons.SHIELD_OUTLINED),
-                feature_chip("增量优先", ft.Icons.BOLT_OUTLINED),
-                feature_chip("断点续传", ft.Icons.REPLAY_ROUNDED),
-                feature_chip("原生体验", ft.Icons.APPLE_ROUNDED),
-            ], spacing=T.SPACE_2, wrap=True),
-            ft.Container(height=T.SPACE_2),
+            ft.Container(height=1, bgcolor=T.BORDER_LIGHT),
             _card(
                 _section_title("选择目录"),
                 _muted_text("支持本地路径和外接硬盘，进入下一步会先做对比再执行。",
-                            size=T.TEXT_XS),
-                ft.Container(height=T.SPACE_1),
-                ft.Row([self.src_field, _picker_btn(True)],
+                            size=T.TEXT_13),
+                ft.Container(height=T.SP_1),
+                ft.Row([self.src_field, self._picker_btn(True)],
                        vertical_alignment=ft.CrossAxisAlignment.END,
-                       spacing=T.SPACE_3),
-                ft.Row([self.dst_field, _picker_btn(False)],
+                       spacing=T.SP_2),
+                ft.Row([self.dst_field, self._picker_btn(False)],
                        vertical_alignment=ft.CrossAxisAlignment.END,
-                       spacing=T.SPACE_3),
-                ft.Container(height=T.SPACE_2),
+                       spacing=T.SP_2),
+                ft.Container(height=T.SP_2),
                 ft.Row([
                     _primary_button("开始对比",
                                     icon=ft.Icons.COMPARE_ARROWS_ROUNDED,
                                     on_click=lambda e: self._do_compare()),
                 ], alignment=ft.MainAxisAlignment.END),
             ),
-        ], spacing=T.SPACE_4, scroll=ft.ScrollMode.AUTO))
+        ], spacing=T.SP_5, scroll=ft.ScrollMode.AUTO))
+
+    def _path_field(self, label, value, hint, on_change) -> ft.TextField:
+        return ft.TextField(
+            label=label,
+            value=value,
+            hint_text=hint,
+            on_change=on_change,
+            expand=True,
+            border_radius=T.RADIUS,
+            border_color=T.BORDER,
+            focused_border_color=T.PRIMARY,
+            cursor_color=T.PRIMARY,
+            text_size=T.TEXT_14,
+            content_padding=ft.Padding.symmetric(vertical=8, horizontal=12),
+        )
+
+    def _picker_btn(self, is_source: bool) -> ft.Container:
+        b = ft.Container(
+            content=ft.Icon(ft.Icons.FOLDER_OPEN_OUTLINED,
+                            color=T.TEXT_PRIMARY, size=18),
+            width=32, height=32,
+            bgcolor=T.BG,
+            border=ft.Border.all(1, T.BORDER),
+            border_radius=T.RADIUS,
+            alignment=ft.Alignment.CENTER,
+            tooltip="选择源目录" if is_source else "选择目标目录",
+            on_click=lambda e, s=is_source: self._pick_dir(s),
+            animate=ft.Animation(T.DUR_FAST, T.EASE),
+        )
+
+        def _hover(e: ft.HoverEvent, ctrl=b) -> None:
+            on = e.data == "true"
+            ctrl.border = ft.Border.all(1, T.PRIMARY if on else T.BORDER)
+            ctrl.content.color = T.PRIMARY if on else T.TEXT_PRIMARY
+            ctrl.update()
+
+        b.on_hover = _hover
+        return b
 
     def _pick_dir(self, is_source: bool) -> None:
-        # 通过系统自带 osascript 弹出原生访达目录选择框，由系统进程托管，
-        # 不在 Flet 线程直接碰 AppKit，也不另起窗口进程。
+        # 通过独立子进程弹出原生访达目录选择框，不在 Flet 线程直接碰 AppKit。
         prompt = "选择源目录" if is_source else "选择目标目录"
 
         def work() -> None:
@@ -421,36 +443,25 @@ class VaultGuardApp:
         self._run_compare(src, dst)
 
     def _run_compare(self, src: str, dst: str) -> None:
-        # 全屏卡片化的"对比中"提示
-        spinner = ft.Container(
-            width=72, height=72,
-            border_radius=T.RADIUS_FULL,
-            gradient=T.gradient_brand(),
-            shadow=T.glow_brand(),
-            content=ft.Container(
-                width=58, height=58,
-                bgcolor=T.WHITE,
-                border_radius=T.RADIUS_FULL,
-                alignment=ft.Alignment.CENTER,
-                content=ft.ProgressRing(
-                    width=28, height=28, stroke_width=3, color=T.BLUE_500),
-            ),
-            alignment=ft.Alignment.CENTER,
-        )
         self._set_content(ft.Column([
             self._page_header("正在对比", "递归扫描源目录并与目标目录对比 ..."),
-            ft.Container(height=T.SPACE_4),
+            ft.Container(height=1, bgcolor=T.BORDER_LIGHT),
             _card(
-                ft.Row([spinner], alignment=ft.MainAxisAlignment.CENTER),
-                ft.Container(height=T.SPACE_3),
-                ft.Row([_badge("同步中", "syncing")],
+                ft.Row([
+                    ft.ProgressRing(width=24, height=24, stroke_width=3,
+                                    color=T.PRIMARY),
+                ], alignment=ft.MainAxisAlignment.CENTER),
+                ft.Container(height=T.SP_3),
+                ft.Row([_badge("对比中", "running")],
                        alignment=ft.MainAxisAlignment.CENTER),
-                ft.Container(height=T.SPACE_2),
-                _muted_text("文件较多时可能需要一会儿，请稍候。",
-                            size=T.TEXT_SM),
-                padding=T.SPACE_7,
+                ft.Container(height=T.SP_2),
+                ft.Row([
+                    _muted_text("文件较多时可能需要一会儿，请稍候。",
+                                size=T.TEXT_13),
+                ], alignment=ft.MainAxisAlignment.CENTER),
+                padding=T.SP_8,
             ),
-        ], spacing=T.SPACE_4))
+        ], spacing=T.SP_5))
 
         def work():
             try:
@@ -477,14 +488,14 @@ class VaultGuardApp:
         dlg = ft.AlertDialog(
             modal=True,
             title=ft.Text("检测到未完成的备份任务",
-                          weight=T.FW_BOLD, color=T.GRAY_900),
+                          weight=T.FW_MEDIUM, size=T.TEXT_16, color=T.TEXT_TITLE),
             content=ft.Text(
                 f"任务 #{task_id} 还有 {undone} 个文件未完成。\n"
                 "您可以从断点继续，或重新开始对比。",
-                color=T.GRAY_700),
-            shape=ft.RoundedRectangleBorder(radius=T.RADIUS_XL),
+                size=T.TEXT_14, color=T.TEXT_PRIMARY),
+            shape=ft.RoundedRectangleBorder(radius=T.RADIUS_MD),
             actions=[
-                _ghost_button("重新开始", on_click=fresh),
+                _default_button("重新开始", on_click=fresh),
                 _primary_button("从断点继续",
                                 icon=ft.Icons.PLAY_ARROW_ROUNDED,
                                 on_click=cont),
@@ -497,57 +508,62 @@ class VaultGuardApp:
         def stat_cell(label, value, color, icon=None):
             head_children = []
             if icon is not None:
-                head_children.append(ft.Icon(icon, color=color, size=18))
+                head_children.append(ft.Icon(icon, color=color, size=16))
             head_children.append(
-                ft.Text(str(value), size=T.TEXT_2XL,
-                        weight=T.FW_BOLD, color=color,
+                ft.Text(str(value), size=T.TEXT_28,
+                        weight=T.FW_MEDIUM, color=color,
                         font_family=T.FONT_MONO))
             return ft.Container(
                 content=ft.Column([
-                    ft.Row(head_children, spacing=8, tight=True,
+                    ft.Row(head_children, spacing=T.SP_2, tight=True,
                            alignment=ft.MainAxisAlignment.CENTER),
-                    _muted_text(label, size=T.TEXT_XS),
+                    _muted_text(label, size=T.TEXT_12),
                 ], horizontal_alignment=ft.CrossAxisAlignment.CENTER,
-                    spacing=4),
+                    spacing=T.SP_1),
                 expand=True, alignment=ft.Alignment.CENTER,
-                padding=T.SPACE_3,
+                padding=T.SP_3,
             )
 
         def vline():
-            return ft.Container(width=1, bgcolor=T.GRAY_200, height=44)
+            return ft.Container(width=1, bgcolor=T.BORDER, height=44)
 
         rows = []
         for it in diff.pending_items[:500]:
             kind = "success" if it.action.value == "new" else "warning"
-            rows.append(ft.Row([
-                _badge(it.action.value, kind),
-                ft.Text(it.rel_path, size=T.TEXT_SM, expand=True,
-                        color=T.GRAY_700,
-                        overflow=ft.TextOverflow.ELLIPSIS),
-                _mono_text(fmt_size(it.size), size=T.TEXT_XS,
-                           color=T.GRAY_500),
-            ], spacing=T.SPACE_3,
-               vertical_alignment=ft.CrossAxisAlignment.CENTER))
+            rows.append(ft.Container(
+                content=ft.Row([
+                    _badge(it.action.value, kind),
+                    ft.Text(it.rel_path, size=T.TEXT_13, expand=True,
+                            color=T.TEXT_TITLE, font_family=T.FONT_MONO,
+                            overflow=ft.TextOverflow.ELLIPSIS),
+                    _mono_text(fmt_size(it.size), size=T.TEXT_12,
+                               color=T.TEXT_TERTIARY),
+                ], spacing=T.SP_3,
+                   vertical_alignment=ft.CrossAxisAlignment.CENTER),
+                padding=ft.Padding.symmetric(vertical=8, horizontal=T.SP_4),
+                border=ft.Border(bottom=ft.BorderSide(1, T.BORDER_LIGHT)),
+            ))
         if len(diff.pending_items) > 500:
-            rows.append(_muted_text(
-                f"... 以及另外 {len(diff.pending_items) - 500} 个文件",
-                size=T.TEXT_XS))
+            rows.append(ft.Container(
+                content=_muted_text(
+                    f"... 以及另外 {len(diff.pending_items) - 500} 个文件",
+                    size=T.TEXT_12),
+                padding=ft.Padding.symmetric(vertical=8, horizontal=T.SP_4)))
 
         if rows:
-            list_view = ft.ListView(rows, spacing=T.SPACE_2,
-                                    expand=True, padding=T.SPACE_3)
+            list_view = ft.ListView(rows, spacing=0, expand=True)
         else:
             list_view = ft.Container(
                 content=ft.Column([
                     ft.Icon(ft.Icons.CHECK_CIRCLE_OUTLINE_ROUNDED,
                             color=T.SUCCESS, size=40),
-                    ft.Text("没有需要备份的文件", weight=T.FW_SEMIBOLD,
-                            color=T.GRAY_900, size=T.TEXT_LG),
+                    ft.Text("没有需要备份的文件", weight=T.FW_MEDIUM,
+                            color=T.TEXT_TITLE, size=T.TEXT_16),
                     _muted_text("目标目录已经是最新的副本。",
-                                size=T.TEXT_SM),
+                                size=T.TEXT_13),
                 ], horizontal_alignment=ft.CrossAxisAlignment.CENTER,
-                   spacing=T.SPACE_2),
-                padding=T.SPACE_7,
+                   spacing=T.SP_2),
+                padding=T.SP_8,
                 alignment=ft.Alignment.CENTER,
             )
 
@@ -556,13 +572,13 @@ class VaultGuardApp:
             disabled=not diff.pending_items,
             on_click=lambda e: self._confirm_backup(src, dst, diff),
         )
-        back_btn = _ghost_button("返回",
-                                 icon=ft.Icons.ARROW_BACK_ROUNDED,
-                                 on_click=lambda e: self._show_home())
+        back_btn = _default_button("返回",
+                                   icon=ft.Icons.ARROW_BACK_ROUNDED,
+                                   on_click=lambda e: self._show_home())
 
         self._set_content(ft.Column([
-            self._page_header("待备份清单",
-                              f"{src}  →  {dst}"),
+            self._page_header("待备份清单", f"{src}  →  {dst}"),
+            ft.Container(height=1, bgcolor=T.BORDER_LIGHT),
             _card(
                 ft.Row([
                     stat_cell("新增", diff.new_count, T.SUCCESS,
@@ -571,27 +587,25 @@ class VaultGuardApp:
                     stat_cell("更新", diff.updated_count, T.WARNING,
                               ft.Icons.AUTORENEW_ROUNDED),
                     vline(),
-                    stat_cell("跳过", diff.skipped_count, T.GRAY_500,
+                    stat_cell("跳过", diff.skipped_count, T.TEXT_TERTIARY,
                               ft.Icons.SKIP_NEXT_ROUNDED),
                     vline(),
                     stat_cell("预计传输", fmt_size(diff.pending_bytes),
-                              T.BLUE_500,
-                              ft.Icons.UPLOAD_ROUNDED),
+                              T.PRIMARY,
+                              ft.Icons.UPLOAD_OUTLINED),
                 ], vertical_alignment=ft.CrossAxisAlignment.CENTER),
             ),
             ft.Container(
                 content=list_view,
-                bgcolor=T.WHITE,
-                border_radius=T.RADIUS_2XL,
-                padding=T.SPACE_3,
-                border=ft.Border.all(1, T.GRAY_100),
-                shadow=T.shadow_sm(),
+                bgcolor=T.BG,
+                border_radius=T.RADIUS_MD,
+                border=ft.Border.all(1, T.BORDER),
                 expand=True,
             ),
             ft.Row([back_btn, confirm_btn],
                    alignment=ft.MainAxisAlignment.END,
-                   spacing=T.SPACE_3),
-        ], spacing=T.SPACE_4, expand=True))
+                   spacing=T.SP_3),
+        ], spacing=T.SP_5, expand=True))
 
     def _confirm_backup(self, src: str, dst: str, diff: DiffResult) -> None:
         task_id = self.svc.create_task(src, dst, diff)
@@ -600,75 +614,75 @@ class VaultGuardApp:
 
     # ========== 任务进行页 ==========
     def _show_progress_view(self) -> None:
-        # 流光渐变进度条：track + fill
+        # 纯色进度条：track + fill，靠真实 width 推进，不做装饰动画
         self.pb_track = ft.Container(
-            bgcolor=T.GRAY_200,
-            height=10,
-            border_radius=T.RADIUS_FULL,
+            bgcolor=T.FILL,
+            height=6,
+            border_radius=T.RADIUS_SM,
             clip_behavior=ft.ClipBehavior.HARD_EDGE,
             expand=True,
         )
         self.pb_fill = ft.Container(
-            gradient=T.gradient_brand(),
-            border_radius=T.RADIUS_FULL,
-            height=10,
+            bgcolor=T.PRIMARY,
+            border_radius=T.RADIUS_SM,
+            height=6,
             width=0,
-            animate=ft.Animation(T.DUR_BASE, T.EASE_OUT),
+            animate=ft.Animation(T.DUR_BASE, T.EASE),
         )
-        # fill 套在 track 内（左对齐）
         self.pb_track.content = ft.Row([self.pb_fill], spacing=0)
 
         self.lbl_pct = ft.Text(
-            "0%", size=T.TEXT_3XL, weight=T.FW_BOLD,
-            color=T.BLUE_500, font_family=T.FONT_MONO)
+            "0%", size=T.TEXT_28, weight=T.FW_MEDIUM,
+            color=T.TEXT_TITLE, font_family=T.FONT_MONO)
         self.lbl_file = ft.Text(
-            "准备中 ...", size=T.TEXT_SM, color=T.GRAY_700,
+            "准备中 ...", size=T.TEXT_13, color=T.TEXT_PRIMARY,
             overflow=ft.TextOverflow.ELLIPSIS, font_family=T.FONT_MONO)
-        self.lbl_stat = ft.Text("", size=T.TEXT_SM, color=T.GRAY_700)
-        self.lbl_speed = _mono_text("", size=T.TEXT_SM, color=T.GRAY_500)
-        self.log_view = ft.ListView([], spacing=4, expand=True,
-                                    padding=T.SPACE_3, auto_scroll=True)
+        self.lbl_stat = ft.Text("", size=T.TEXT_13, color=T.TEXT_PRIMARY)
+        self.lbl_speed = _mono_text("", size=T.TEXT_13, color=T.TEXT_TERTIARY)
+        self.log_view = ft.ListView([], spacing=2, expand=True,
+                                    padding=T.SP_3, auto_scroll=True)
 
-        self.btn_pause = _ghost_button(
+        self.btn_pause = _default_button(
             "暂停", icon=ft.Icons.PAUSE_ROUNDED,
             on_click=lambda e: self._toggle_pause())
-        self.btn_cancel = _ghost_button(
+        self.btn_cancel = _default_button(
             "中断", icon=ft.Icons.STOP_ROUNDED,
             on_click=lambda e: self._cancel_task(),
             danger=True)
 
         self._set_content(ft.Column([
             self._page_header("备份进行中"),
+            ft.Container(height=1, bgcolor=T.BORDER_LIGHT),
             _card(
                 ft.Row([
                     ft.Column([
                         self.lbl_pct,
-                        ft.Row([_badge("同步中", "syncing"), self.lbl_stat],
-                               spacing=T.SPACE_2,
+                        ft.Row([_badge("备份中", "running"), self.lbl_stat],
+                               spacing=T.SP_2,
                                vertical_alignment=ft.CrossAxisAlignment.CENTER),
                         self.lbl_speed,
-                    ], spacing=T.SPACE_1, expand=True),
+                    ], spacing=T.SP_1, expand=True),
                     ft.Row([self.btn_pause, self.btn_cancel],
-                           spacing=T.SPACE_2),
-                ], vertical_alignment=ft.CrossAxisAlignment.CENTER),
-                ft.Container(height=T.SPACE_2),
+                           spacing=T.SP_2),
+                ], vertical_alignment=ft.CrossAxisAlignment.START),
+                ft.Container(height=T.SP_2),
                 self.pb_track,
                 ft.Row([
                     ft.Icon(ft.Icons.INSERT_DRIVE_FILE_OUTLINED,
-                            size=14, color=T.GRAY_400),
+                            size=14, color=T.TEXT_TERTIARY),
                     self.lbl_file,
-                ], spacing=8),
+                ], spacing=T.SP_2),
             ),
             _section_title("实时日志"),
             ft.Container(
                 content=self.log_view,
-                bgcolor=T.INK,
-                border_radius=T.RADIUS_2XL,
-                padding=T.SPACE_2,
+                bgcolor=T.FILL,
+                border_radius=T.RADIUS_MD,
+                border=ft.Border.all(1, T.BORDER),
+                padding=T.SP_2,
                 expand=True,
-                shadow=T.shadow_sm(),
             ),
-        ], spacing=T.SPACE_4, expand=True))
+        ], spacing=T.SP_5, expand=True))
 
     def _start_execution(self, src: str, dst: str, resume: bool) -> None:
         self._show_progress_view()
@@ -696,31 +710,19 @@ class VaultGuardApp:
 
     def _update_progress(self, prog: CopyProgress) -> None:
         pct = (prog.transferred_bytes / prog.total_bytes) if prog.total_bytes else 1.0
-        # 用 LayoutBuilder 不便，这里用百分比宽度近似：track 内 fill 用相对 width
-        try:
-            track_width = self.pb_track.width or 0
-        except Exception:
-            track_width = 0
-        # Flet 没有现成的相对宽度；用 expand=False 并通过 page 的当前宽度 - 容器 padding 大致估算。
-        # 退而求其次：让 fill 占据 fraction 由父 Row 的 expand 控制。
-        # 简化方案：直接用 ProgressBar 的语义，通过 fill 的 expand 来按比例占位。
-        self.pb_fill.width = None
-        self.pb_fill.expand = max(pct, 0.001) if pct < 1 else 1
-        # 用父 Row 的另一个空白 spacer 来占据剩余
-        # 这里采用更稳妥的方式：直接把 track.content 替换为 Row[fill(expand=pct), spacer(expand=1-pct)]
+        # 纯色填充，靠父 Row 的 expand 比例近似真实 width 推进
         if pct < 1.0:
             spacer_expand = max(1.0 - pct, 0.001)
             self.pb_track.content = ft.Row([
-                ft.Container(gradient=T.gradient_brand(),
-                             height=10, expand=pct,
-                             border_radius=T.RADIUS_FULL),
+                ft.Container(bgcolor=T.PRIMARY, height=6,
+                             expand=max(pct, 0.001),
+                             border_radius=T.RADIUS_SM),
                 ft.Container(expand=spacer_expand),
             ], spacing=0)
         else:
             self.pb_track.content = ft.Container(
-                gradient=T.gradient_brand(),
-                height=10, expand=True,
-                border_radius=T.RADIUS_FULL)
+                bgcolor=T.PRIMARY, height=6, expand=True,
+                border_radius=T.RADIUS_SM)
 
         self.lbl_pct.value = f"{pct * 100:.0f}%"
         self.lbl_stat.value = (
@@ -732,8 +734,8 @@ class VaultGuardApp:
 
         if prog.current_file:
             self.log_view.controls.append(
-                ft.Text(f"✓ {prog.current_file}", size=11,
-                        color=T.CYAN_400, font_family=T.FONT_MONO))
+                ft.Text(f"✓ {prog.current_file}", size=T.TEXT_12,
+                        color=T.TEXT_PRIMARY, font_family=T.FONT_MONO))
             if len(self.log_view.controls) > 1000:
                 self.log_view.controls.pop(0)
         try:
@@ -744,14 +746,16 @@ class VaultGuardApp:
     def _toggle_pause(self) -> None:
         if not self.executor:
             return
+        row = self.btn_pause.content
+        icon_ctrl, label_ctrl = row.controls[0], row.controls[1]
         if self.executor.is_paused:
             self.executor.resume()
-            self.btn_pause.text = "暂停"
-            self.btn_pause.icon = ft.Icons.PAUSE_ROUNDED
+            label_ctrl.value = "暂停"
+            icon_ctrl.name = ft.Icons.PAUSE_ROUNDED
         else:
             self.executor.pause()
-            self.btn_pause.text = "继续"
-            self.btn_pause.icon = ft.Icons.PLAY_ARROW_ROUNDED
+            label_ctrl.value = "继续"
+            icon_ctrl.name = ft.Icons.PLAY_ARROW_ROUNDED
         self.page.update()
 
     def _cancel_task(self) -> None:
@@ -769,65 +773,75 @@ class VaultGuardApp:
     def _show_result(self, prog: CopyProgress) -> None:
         success = prog.finished and prog.failed == 0
         if success:
-            kind, color, icon = "success", T.SUCCESS, ft.Icons.VERIFIED_ROUNDED
+            kind, color, bg, icon = ("success", T.SUCCESS, T.SUCCESS_BG,
+                                     ft.Icons.CHECK_CIRCLE_OUTLINE_ROUNDED)
             title = "备份完成"
         elif prog.finished:
-            kind, color, icon = "warning", T.WARNING, ft.Icons.WARNING_AMBER_ROUNDED
+            kind, color, bg, icon = ("warning", T.WARNING, T.WARNING_BG,
+                                     ft.Icons.WARNING_AMBER_ROUNDED)
             title = "备份完成（有失败项）"
         else:
-            kind, color, icon = "danger", T.DANGER, ft.Icons.STOP_CIRCLE_OUTLINED
+            kind, color, bg, icon = ("danger", T.DANGER, T.DANGER_BG,
+                                     ft.Icons.STOP_CIRCLE_OUTLINED)
             title = "任务已中断"
 
         big_icon = ft.Container(
-            width=72, height=72,
-            border_radius=T.RADIUS_FULL,
-            bgcolor=ft.Colors.with_opacity(0.12, color),
-            content=ft.Icon(icon, size=36, color=color),
+            width=56, height=56,
+            border_radius=T.RADIUS_MD,
+            bgcolor=bg,
+            content=ft.Icon(icon, size=28, color=color),
             alignment=ft.Alignment.CENTER,
         )
 
         def kv(label, value, mono=True):
             return ft.Row([
-                _muted_text(label, size=T.TEXT_SM),
+                _muted_text(label, size=T.TEXT_13),
                 ft.Container(expand=True),
-                (_mono_text(str(value), size=T.TEXT_SM, color=T.GRAY_900)
+                (_mono_text(str(value), size=T.TEXT_13, color=T.TEXT_TITLE)
                  if mono else
-                 ft.Text(str(value), size=T.TEXT_SM,
-                         color=T.GRAY_900, weight=T.FW_SEMIBOLD)),
+                 ft.Text(str(value), size=T.TEXT_13,
+                         color=T.TEXT_TITLE, weight=T.FW_MEDIUM)),
             ])
 
         self._set_content(ft.Column([
             self._page_header("备份结果"),
+            ft.Container(height=1, bgcolor=T.BORDER_LIGHT),
             _card(
                 ft.Row([
                     big_icon,
                     ft.Column([
-                        ft.Text(title, size=T.TEXT_XL, weight=T.FW_BOLD,
-                                color=T.GRAY_900),
+                        ft.Text(title, size=T.TEXT_20, weight=T.FW_MEDIUM,
+                                color=T.TEXT_TITLE),
                         _badge({"success": "成功", "warning": "完成（有失败）",
                                 "danger": "已中断"}[kind], kind),
-                    ], spacing=T.SPACE_2),
-                ], spacing=T.SPACE_4,
+                    ], spacing=T.SP_2),
+                ], spacing=T.SP_4,
                    vertical_alignment=ft.CrossAxisAlignment.CENTER),
-                ft.Divider(color=T.GRAY_100),
+                ft.Divider(color=T.BORDER_LIGHT, height=1),
                 kv("复制", f"{prog.copied} 个"),
                 kv("失败", f"{prog.failed} 个"),
                 kv("传输", fmt_size(prog.transferred_bytes)),
-                ft.Container(height=T.SPACE_2),
+                ft.Container(height=T.SP_2),
                 ft.Row([
-                    _ghost_button("返回主页",
-                                  icon=ft.Icons.HOME_ROUNDED,
-                                  on_click=lambda e: self._show_home()),
+                    _default_button("返回主页",
+                                    icon=ft.Icons.HOME_OUTLINED,
+                                    on_click=lambda e: self._goto_home()),
                     _primary_button("查看历史",
                                     icon=ft.Icons.HISTORY_ROUNDED,
                                     on_click=lambda e: self._goto_history()),
                 ], alignment=ft.MainAxisAlignment.END,
-                   spacing=T.SPACE_3),
+                   spacing=T.SP_3),
             ),
-        ], spacing=T.SPACE_4))
+        ], spacing=T.SP_5))
+
+    def _goto_home(self) -> None:
+        self._nav_index = 0
+        self._refresh_nav()
+        self._show_home()
 
     def _goto_history(self) -> None:
-        self.nav.selected_index = 1
+        self._nav_index = 1
+        self._refresh_nav()
         self._show_history()
 
     # ========== 历史记录页 ==========
@@ -836,19 +850,20 @@ class VaultGuardApp:
         if not tasks:
             self._set_content(ft.Column([
                 self._page_header("历史记录"),
+                ft.Container(height=1, bgcolor=T.BORDER_LIGHT),
                 _card(
                     ft.Container(
                         content=ft.Column([
-                            ft.Icon(ft.Icons.INBOX_ROUNDED,
-                                    color=T.GRAY_400, size=40),
-                            _muted_text("暂无历史任务", size=T.TEXT_SM),
+                            ft.Icon(ft.Icons.INBOX_OUTLINED,
+                                    color=T.TEXT_TERTIARY, size=40),
+                            _muted_text("暂无历史任务", size=T.TEXT_13),
                         ], horizontal_alignment=ft.CrossAxisAlignment.CENTER,
-                           spacing=T.SPACE_2),
-                        padding=T.SPACE_7,
+                           spacing=T.SP_2),
+                        padding=T.SP_8,
                         alignment=ft.Alignment.CENTER,
                     ),
                 ),
-            ], spacing=T.SPACE_4))
+            ], spacing=T.SP_5))
             return
 
         rows = []
@@ -856,25 +871,26 @@ class VaultGuardApp:
             "completed": "success",
             "failed": "danger",
             "paused": "warning",
-            "running": "syncing",
+            "running": "running",
             "cancelled": "warning",
         }
         for t in tasks:
-            kind = kind_map.get(t["status"], "syncing")
+            kind = kind_map.get(t["status"], "running")
             rows.append(ft.DataRow(cells=[
                 ft.DataCell(_mono_text(f"#{t['id']}",
-                                       size=T.TEXT_SM, color=T.GRAY_900)),
+                                       size=T.TEXT_13, color=T.TEXT_TITLE)),
                 ft.DataCell(_badge(t["status"], kind)),
                 ft.DataCell(_mono_text(str(t["copied_files"]),
                                        color=T.SUCCESS)),
                 ft.DataCell(_mono_text(str(t["failed_files"]),
                                        color=T.DANGER if t["failed_files"]
-                                       else T.GRAY_500)),
+                                       else T.TEXT_TERTIARY)),
                 ft.DataCell(ft.Text(fmt_time(t["start_time"]),
-                                    size=T.TEXT_SM, color=T.GRAY_700)),
+                                    size=T.TEXT_13, color=T.TEXT_PRIMARY)),
                 ft.DataCell(ft.IconButton(
                     icon=ft.Icons.ARTICLE_OUTLINED,
-                    icon_color=T.BLUE_500,
+                    icon_color=T.PRIMARY,
+                    icon_size=18,
                     tooltip="查看详情",
                     on_click=lambda e, tid=t["id"]:
                         self._show_task_detail(tid))),
@@ -882,32 +898,32 @@ class VaultGuardApp:
 
         def col(label):
             return ft.DataColumn(
-                ft.Text(label, size=T.TEXT_XS,
-                        color=T.GRAY_500, weight=T.FW_SEMIBOLD))
+                ft.Text(label, size=T.TEXT_12,
+                        color=T.TEXT_TERTIARY, weight=T.FW_MEDIUM))
 
         table = ft.DataTable(
             columns=[col("ID"), col("状态"), col("复制"),
                      col("失败"), col("开始时间"), col("详情")],
             rows=rows,
-            heading_row_color=T.BG_COOL,
+            heading_row_color=T.FILL,
             heading_row_height=42,
-            data_row_color={"hovered": T.BG_COOL},
-            divider_thickness=0.5,
+            data_row_color={"hovered": T.FILL},
+            divider_thickness=1,
+            border_radius=T.RADIUS_MD,
             column_spacing=28,
         )
         self._set_content(ft.Column([
-            self._page_header("历史记录",
-                              f"共 {len(tasks)} 条任务记录"),
+            self._page_header("历史记录", f"共 {len(tasks)} 条任务记录"),
+            ft.Container(height=1, bgcolor=T.BORDER_LIGHT),
             ft.Container(
                 content=ft.Column([table], scroll=ft.ScrollMode.AUTO),
-                bgcolor=T.WHITE,
-                border_radius=T.RADIUS_2XL,
-                padding=T.SPACE_4,
-                border=ft.Border.all(1, T.GRAY_100),
-                shadow=T.shadow_md(),
+                bgcolor=T.BG,
+                border_radius=T.RADIUS_MD,
+                padding=T.SP_4,
+                border=ft.Border.all(1, T.BORDER),
                 expand=True,
             ),
-        ], spacing=T.SPACE_4, expand=True))
+        ], spacing=T.SP_5, expand=True))
 
     def _show_task_detail(self, task_id: int) -> None:
         logs = self.svc.get_file_logs(task_id)
@@ -921,26 +937,26 @@ class VaultGuardApp:
                     else ft.Icons.ERROR_OUTLINE_ROUNDED,
                     size=14,
                     color=T.SUCCESS if ok else T.DANGER),
-                ft.Text(lg["file_path"], size=T.TEXT_SM, expand=True,
-                        color=T.GRAY_700,
+                ft.Text(lg["file_path"], size=T.TEXT_13, expand=True,
+                        color=T.TEXT_PRIMARY, font_family=T.FONT_MONO,
                         overflow=ft.TextOverflow.ELLIPSIS),
-                _muted_text(lg["reason"], size=T.TEXT_XS),
-            ], spacing=T.SPACE_2))
+                _muted_text(lg["reason"], size=T.TEXT_12),
+            ], spacing=T.SP_2))
         if not items:
             items = [_muted_text("无文件日志")]
 
         content = ft.Container(
-            content=ft.ListView(items, spacing=T.SPACE_1, padding=T.SPACE_3),
+            content=ft.ListView(items, spacing=T.SP_1, padding=T.SP_3),
             width=680, height=440,
         )
         dlg = ft.AlertDialog(
             title=ft.Text(
                 f"任务 #{task_id} 详情"
                 + (f" · {task['status']}" if task else ""),
-                weight=T.FW_BOLD, color=T.GRAY_900),
+                weight=T.FW_MEDIUM, size=T.TEXT_16, color=T.TEXT_TITLE),
             content=content,
-            shape=ft.RoundedRectangleBorder(radius=T.RADIUS_XL),
-            actions=[_ghost_button(
+            shape=ft.RoundedRectangleBorder(radius=T.RADIUS_MD),
+            actions=[_default_button(
                 "关闭", on_click=lambda e: self.page.close(dlg))],
         )
         self.page.open(dlg)
@@ -952,12 +968,12 @@ class VaultGuardApp:
         def _tf(label, value, **kw) -> ft.TextField:
             return ft.TextField(
                 label=label, value=value,
-                border_radius=T.RADIUS_LG,
-                border_color=T.GRAY_200,
-                focused_border_color=T.BLUE_500,
-                cursor_color=T.BLUE_500,
-                text_size=T.TEXT_SM,
-                content_padding=ft.Padding.symmetric(vertical=12, horizontal=14),
+                border_radius=T.RADIUS,
+                border_color=T.BORDER,
+                focused_border_color=T.PRIMARY,
+                cursor_color=T.PRIMARY,
+                text_size=T.TEXT_14,
+                content_padding=ft.Padding.symmetric(vertical=8, horizontal=12),
                 **kw,
             )
 
@@ -967,16 +983,16 @@ class VaultGuardApp:
             keyboard_type=ft.KeyboardType.NUMBER)
         self.f_compare_size = ft.Switch(
             label="对比文件大小", value=s.compare_size,
-            active_color=T.BLUE_500)
+            active_color=T.PRIMARY)
         self.f_verify_hash = ft.Switch(
             label="复制后做 hash 完整性校验（更安全，更慢）",
-            value=s.verify_hash, active_color=T.BLUE_500)
+            value=s.verify_hash, active_color=T.PRIMARY)
         self.f_delete_sync = ft.Switch(
             label="删除同步（危险，默认关闭）",
             value=s.delete_sync, active_color=T.DANGER)
         self.f_use_recycle = ft.Switch(
             label="删除时移入回收区而非物理删除",
-            value=s.use_recycle, active_color=T.BLUE_500)
+            value=s.use_recycle, active_color=T.PRIMARY)
         self.f_exclude = _tf(
             "排除规则（每行一个，支持通配符）",
             "\n".join(s.exclude_patterns),
@@ -988,43 +1004,49 @@ class VaultGuardApp:
 
         data_dir_row = ft.Row([
             ft.Icon(ft.Icons.FOLDER_SHARED_OUTLINED,
-                    color=T.GRAY_400, size=18),
+                    color=T.TEXT_TERTIARY, size=18),
             _muted_text(f"数据/日志/配置位置：{self.svc.data_dir}",
-                        size=T.TEXT_XS),
-        ], spacing=T.SPACE_2)
+                        size=T.TEXT_12),
+        ], spacing=T.SP_2)
 
-        save_btn = _primary_button("保存设置", icon=ft.Icons.SAVE_ROUNDED,
+        save_btn = _primary_button("保存设置", icon=ft.Icons.SAVE_OUTLINED,
                                    on_click=lambda e: self._save_settings())
 
         self._set_content(ft.Column([
             self._page_header("设置", "调整对比策略与文件安全规则"),
-            _card(
-                _section_title("对比策略"),
-                self.f_tolerance,
-                self.f_compare_size,
+            ft.Container(height=1, bgcolor=T.BORDER_LIGHT),
+            ft.Container(
+                content=ft.Column([
+                    _card(
+                        _section_title("对比策略"),
+                        self.f_tolerance,
+                        self.f_compare_size,
+                    ),
+                    _card(
+                        _section_title("文件安全"),
+                        self.f_verify_hash,
+                        self.f_retry,
+                        ft.Divider(color=T.BORDER_LIGHT, height=1),
+                        ft.Row([
+                            ft.Icon(ft.Icons.WARNING_AMBER_ROUNDED,
+                                    color=T.DANGER, size=16),
+                            ft.Text("删除策略（遵循文件安全原则）",
+                                    size=T.TEXT_14, weight=T.FW_MEDIUM,
+                                    color=T.DANGER),
+                        ], spacing=T.SP_2),
+                        self.f_delete_sync,
+                        self.f_use_recycle,
+                    ),
+                    _card(
+                        _section_title("排除规则"),
+                        self.f_exclude,
+                    ),
+                    _card(data_dir_row),
+                    ft.Row([save_btn], alignment=ft.MainAxisAlignment.END),
+                ], spacing=T.SP_4),
+                width=640,
             ),
-            _card(
-                _section_title("文件安全"),
-                self.f_verify_hash,
-                self.f_retry,
-                ft.Divider(color=T.GRAY_100),
-                ft.Row([
-                    ft.Icon(ft.Icons.WARNING_AMBER_ROUNDED,
-                            color=T.DANGER, size=16),
-                    ft.Text("删除策略（遵循文件安全原则）",
-                            size=T.TEXT_SM, weight=T.FW_SEMIBOLD,
-                            color=T.DANGER),
-                ], spacing=T.SPACE_2),
-                self.f_delete_sync,
-                self.f_use_recycle,
-            ),
-            _card(
-                _section_title("排除规则"),
-                self.f_exclude,
-            ),
-            _card(data_dir_row),
-            ft.Row([save_btn], alignment=ft.MainAxisAlignment.END),
-        ], spacing=T.SPACE_4, scroll=ft.ScrollMode.AUTO))
+        ], spacing=T.SP_5, scroll=ft.ScrollMode.AUTO))
 
     def _save_settings(self) -> None:
         s = self.svc.settings

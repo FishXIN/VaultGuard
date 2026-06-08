@@ -55,6 +55,19 @@ MAIN_PL="$APP/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Set :LSUIElement true" "$MAIN_PL" 2>/dev/null || \
   /usr/libexec/PlistBuddy -c "Add :LSUIElement bool true" "$MAIN_PL"
 
+echo "==> 声明中文本地化（让系统原生面板/对话框跟随系统语言显示中文）"
+# macOS 的原生面板（如 choose folder / NSOpenPanel 的 New Folder、Cancel、
+# Recents、Today 等控件）语言，取决于宿主 App 声明支持哪些语言。若不声明，
+# AppKit 认为 App 只支持英文，即便系统是中文也会把面板回退成英文。
+/usr/libexec/PlistBuddy -c "Set :CFBundleDevelopmentRegion zh_CN" "$MAIN_PL" 2>/dev/null || \
+  /usr/libexec/PlistBuddy -c "Add :CFBundleDevelopmentRegion string zh_CN" "$MAIN_PL"
+/usr/libexec/PlistBuddy -c "Delete :CFBundleLocalizations" "$MAIN_PL" 2>/dev/null || true
+/usr/libexec/PlistBuddy -c "Add :CFBundleLocalizations array" "$MAIN_PL"
+/usr/libexec/PlistBuddy -c "Add :CFBundleLocalizations:0 string zh-Hans" "$MAIN_PL"
+/usr/libexec/PlistBuddy -c "Add :CFBundleLocalizations:1 string en" "$MAIN_PL"
+/usr/libexec/PlistBuddy -c "Set :CFBundleAllowMixedLocalizations true" "$MAIN_PL" 2>/dev/null || \
+  /usr/libexec/PlistBuddy -c "Add :CFBundleAllowMixedLocalizations bool true" "$MAIN_PL"
+
 echo "==> 注入随包内置、改名为 VaultGuard 的窗口客户端（使应用自包含）"
 SRC=$(ls -d "$HOME"/.flet/client/flet-desktop-full-* 2>/dev/null | head -1)/Flet.app
 [ -d "$SRC" ] || { echo "未找到 Flet 客户端缓存：$SRC"; exit 1; }
