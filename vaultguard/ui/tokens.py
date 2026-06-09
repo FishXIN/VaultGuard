@@ -4,7 +4,7 @@
 由于桌面端不支持 CSS Variables，这里把规范中的 token 转成 Python 可消费的常量，
 保持名称一致，便于跨端比对。
 
-设计基准：黑白灰为主、单一克制蓝、小圆角（4–6px）、极轻阴影（仅浮层）、零多余特效。
+设计基准：黑白灰为主、单一克制黑、小圆角（4–6px）、极轻阴影（仅浮层）、零多余特效。
 """
 from __future__ import annotations
 
@@ -12,11 +12,11 @@ from .runtime import ft
 
 
 # ============ 1. 颜色 ============
-# 1.1 主色（唯一强调色，火山引擎蓝）
-PRIMARY = "#165DFF"
-PRIMARY_HOVER = "#4080FF"
-PRIMARY_ACTIVE = "#0E42D2"
-PRIMARY_BG = "#E8F3FF"  # 浅蓝底：选中行、轻量标签
+# 1.1 主色（唯一强调色，纯黑——黑灰序极简风）
+PRIMARY = "#1D2129"
+PRIMARY_HOVER = "#4E5969"
+PRIMARY_ACTIVE = "#000000"
+PRIMARY_BG = "#E5E6EB"  # 浅灰底：选中行、轻量标签
 
 # 1.2 中性色（主体）
 TEXT_TITLE = "#1D2129"
@@ -37,8 +37,8 @@ WARNING = "#FF7D00"
 WARNING_BG = "#FFF7E8"
 DANGER = "#F53F3F"
 DANGER_BG = "#FFECE8"
-RUNNING = "#165DFF"
-RUNNING_BG = "#E8F3FF"
+RUNNING = "#4E5969"
+RUNNING_BG = "#E5E6EB"
 
 
 # ============ 2. 字体 ============

@@ -106,7 +106,7 @@ def cmd_history(svc: BackupService, args) -> int:
 
 
 def main(argv=None) -> int:
-    parser = argparse.ArgumentParser(description="VaultGuard 增量备份 CLI")
+    parser = argparse.ArgumentParser(description="备份了嘛 增量备份 CLI")
     sub = parser.add_subparsers(dest="command", required=True)
 
     p_cmp = sub.add_parser("compare", help="对比源与目标，打印清单（不复制）")

@@ -51,7 +51,7 @@ class ErrorReporter:
             return None
 
     def build_mailto(self, report: dict) -> str:
-        subject = f"VaultGuard 错误反馈：{report.get('type', 'UnknownError')}"
+        subject = f"备份了嘛 错误反馈：{report.get('type', 'UnknownError')}"
         body = self.format_text(report)
         # Keep the URL short enough for default mail clients.
         if len(body) > 6000:
@@ -63,7 +63,7 @@ class ErrorReporter:
 
     def format_text(self, report: dict) -> str:
         return (
-            "VaultGuard 错误反馈\n"
+            "备份了嘛 错误反馈\n"
             f"时间：{report.get('time', '')}\n"
             f"场景：{report.get('context', '')}\n"
             f"类型：{report.get('type', '')}\n"

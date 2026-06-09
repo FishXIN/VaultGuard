@@ -367,7 +367,7 @@ class VaultGuardApp:
     # ---------- 页面基础 ----------
     def _setup_page(self) -> None:
         p = self.page
-        p.title = "VaultGuard · 增量备份"
+        p.title = "备份了嘛 · 增量备份"
         p.bgcolor = T.BG
         p.theme_mode = ft.ThemeMode.LIGHT
         p.theme = ft.Theme(
@@ -476,7 +476,7 @@ class VaultGuardApp:
                 row.controls[0].color = fg
                 row.controls[1].color = fg
                 c.bgcolor = (
-                    "#DCEBFF" if active_now and hovering
+                    "#C9CDD4" if active_now and hovering
                     else T.PRIMARY_BG if active_now
                     else T.FILL_HOVER if hovering
                     else None
@@ -588,7 +588,7 @@ class VaultGuardApp:
             if hasattr(self.page, "run_task"):
                 self.page.run_task(guarded_refresher)
             else:
-                raise RuntimeError("当前 VaultGuard 桌面运行时缺少 page.run_task")
+                raise RuntimeError("当前备份了嘛桌面运行时缺少 page.run_task")
         except Exception as ex:  # noqa: BLE001
             self._handle_error(context, ex)
 
@@ -673,6 +673,11 @@ class VaultGuardApp:
         self._snack("已打开邮件草稿，请确认后发送")
 
     def _open_overlay(self, control) -> None:
+        # Flet 0.85+：弹窗与 SnackBar 都是 DialogControl，统一用 show_dialog。
+        # 兼容更早版本：page.open / page.dialog / overlay 依次降级。
+        if hasattr(self.page, "show_dialog"):
+            self.page.show_dialog(control)
+            return
         try:
             if hasattr(self.page, "open"):
                 self.page.open(control)
@@ -690,6 +695,13 @@ class VaultGuardApp:
         self.page.update()
 
     def _close_overlay(self, control) -> None:
+        # Flet 0.85+：pop_dialog 弹出当前栈顶弹窗（无参数）。
+        if hasattr(self.page, "pop_dialog"):
+            try:
+                self.page.pop_dialog()
+                return
+            except Exception:  # noqa: BLE001
+                pass
         try:
             if hasattr(self.page, "close"):
                 self.page.close(control)
@@ -729,7 +741,7 @@ class VaultGuardApp:
             suffix=self._picker_btn(False))
 
         self._set_task_content(ft.Column([
-            self._page_header("你好，今天要备份点什么～"),
+            self._page_header("你好，今天备份了嘛？"),
             ft.Container(height=1, bgcolor=T.BORDER_LIGHT),
             _card(
                 _section_title("选择目录"),
@@ -764,12 +776,12 @@ class VaultGuardApp:
     def _picker_btn(self, is_source: bool) -> ft.Container:
         prompt = "选择源目录" if is_source else "选择目标目录"
         # 配色对齐左侧导航栏：默认灰底（FILL_HOVER #F2F3F5）+ 灰图标；
-        # hover 切到导航选中态浅蓝（PRIMARY_BG #E8F3FF）+ 蓝图标；
-        # 按下瞬态再深一档（#DCEBFF，与导航 hover-active 一致）。
+        # hover 切到导航选中态浅灰（PRIMARY_BG #E5E6EB）+ 黑图标；
+        # 按下瞬态再深一档（#C9CDD4，与导航 hover-active 一致）。
         # 不使用 animate / 不切尺寸，避免 suffix 重布局造成的卡顿。
         idle_bg = T.FILL_HOVER          # #F2F3F5
-        hover_bg = T.PRIMARY_BG         # #E8F3FF
-        active_bg = "#DCEBFF"           # 与左侧导航 hover-active 同色
+        hover_bg = T.PRIMARY_BG         # #E5E6EB
+        active_bg = "#C9CDD4"           # 与左侧导航 hover-active 同色
 
         icon = _nav_svg_icon(_NAV_SVG_FOLDER, T.TEXT_TERTIARY, 18)
         b = ft.Container(
@@ -2592,7 +2604,7 @@ class VaultGuardApp:
         def work() -> None:
             from .dirpicker import pick_directory
             try:
-                path = pick_directory("选择 VaultGuard 数据目录")
+                path = pick_directory("选择备份了嘛数据目录")
             except Exception as e:  # noqa: BLE001
                 self._handle_error("选择数据目录", e)
                 return
@@ -2661,7 +2673,7 @@ class VaultGuardApp:
                 ft.Text("将把 config.json、vaultguard.db、logs/、error_reports/ "
                         "整体迁移到新位置，原位置上述内容会被清除。",
                         size=T.TEXT_12, color=T.TEXT_TERTIARY),
-                ft.Text("迁移完成后会自动重启 VaultGuard 以保证句柄干净。",
+                ft.Text("迁移完成后会自动重启备份了嘛以保证句柄干净。",
                         size=T.TEXT_12, color=T.WARNING),
             ]
             cancel_btn = _default_button(
@@ -2710,7 +2722,7 @@ class VaultGuardApp:
                 ft.Row([
                     ft.Icon(ft.Icons.CHECK_CIRCLE_ROUNDED,
                             color=T.SUCCESS, size=20),
-                    ft.Text("迁移完成，VaultGuard 即将重启以使新位置生效。",
+                    ft.Text("迁移完成，备份了嘛即将重启以使新位置生效。",
                             size=T.TEXT_14, color=T.TEXT_PRIMARY),
                 ], spacing=T.SP_3,
                     vertical_alignment=ft.CrossAxisAlignment.CENTER),
