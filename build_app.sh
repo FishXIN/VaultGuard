@@ -150,8 +150,14 @@ echo "==> 按 GitHub 发布策略导出压缩包与校验文件"
 ZIP="dist/VaultGuard-${VERSION}-${RELEASE_ARCH}.zip"
 CHECKSUMS="dist/checksums.txt"
 rm -f "$ZIP" "$CHECKSUMS"
-# 使用 ditto 保留 macOS .app 包结构、资源分叉与父目录，避免普通 zip 破坏应用包元数据。
-ditto -c -k --sequesterRsrc --keepParent "$APP" "$ZIP"
+# 使用 zip 的 -y 保留符号链接本身，避免解析内置客户端框架链接时误报缺失。
+if ! (cd dist && /usr/bin/zip -qry -y "$(basename "$ZIP")" "$(basename "$APP")"); then
+  echo "==> zip 压缩遇到符号链接读取异常，改用 macOS ditto 兜底"
+  rm -f "$ZIP"
+  find dist -maxdepth 1 -type f -name 'zi*' -delete 2>/dev/null || true
+  (cd dist && /usr/bin/ditto -c -k --sequesterRsrc --keepParent \
+    "$(basename "$APP")" "$(basename "$ZIP")")
+fi
 shasum -a 256 "$ZIP" | sed 's#dist/##' > "$CHECKSUMS"
 
 echo "==> 清理构建中间产物"
