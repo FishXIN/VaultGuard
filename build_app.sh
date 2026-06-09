@@ -61,6 +61,20 @@ env "$VIEW_ENV=$EMPTY_BIN" "$PYINSTALLER" main.py \
   --hidden-import "$RUNTIME_LOWER" \
   --hidden-import AppKit \
   --hidden-import Foundation \
+  --exclude-module tkinter \
+  --exclude-module _tkinter \
+  --exclude-module turtle \
+  --exclude-module turtledemo \
+  --exclude-module test \
+  --exclude-module tests \
+  --exclude-module unittest \
+  --exclude-module pydoc \
+  --exclude-module pydoc_data \
+  --exclude-module lib2to3 \
+  --exclude-module ensurepip \
+  --exclude-module idlelib \
+  --exclude-module xmlrpc \
+  --exclude-module pdb \
   --distpath dist
 
 APP="dist/VaultGuard.app"
@@ -73,6 +87,11 @@ MAIN_ICON_DIR="$APP/Contents/Resources"
 # PyInstaller 通过 --icon 已注入；这里再次覆盖以确保一致
 cp "$ICON" "$MAIN_ICON_DIR/icon-windowed.icns" 2>/dev/null || true
 cp "$ICON" "$MAIN_ICON_DIR/icon.icns" 2>/dev/null || true
+
+echo "==> 清理 PyInstaller 残留的 __pycache__ 与 .pyc（运行时不依赖）"
+# PyInstaller 在 Resources/vaultguard 下留下了源码与字节码副本，运行时只需 .pyc，
+# __pycache__ 仅是中间文件，删除可缩小最终包体且不影响功能。
+find "$APP/Contents/Resources" -type d -name '__pycache__' -prune -exec rm -rf {} + 2>/dev/null || true
 
 echo "==> 让宿主进程隐藏 Dock 图标（避免启动时出现两个图标）"
 # 本应用的宿主进程（运行 Python 服务端）会再启动内置窗口客户端，
@@ -151,7 +170,8 @@ ZIP="dist/VaultGuard-${VERSION}-${RELEASE_ARCH}.zip"
 CHECKSUMS="dist/checksums.txt"
 rm -f "$ZIP" "$CHECKSUMS"
 # 使用 zip 的 -y 保留符号链接本身，避免解析内置客户端框架链接时误报缺失。
-if ! (cd dist && /usr/bin/zip -qry -y "$(basename "$ZIP")" "$(basename "$APP")"); then
+# -9 启用最大压缩等级，进一步缩小发布包体（仅压缩耗时增加，解压无差别）。
+if ! (cd dist && /usr/bin/zip -qry9 -y "$(basename "$ZIP")" "$(basename "$APP")"); then
   echo "==> zip 压缩遇到符号链接读取异常，改用 macOS ditto 兜底"
   rm -f "$ZIP"
   find dist -maxdepth 1 -type f -name 'zi*' -delete 2>/dev/null || true
