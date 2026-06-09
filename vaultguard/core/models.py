@@ -11,7 +11,9 @@ class Action(str, Enum):
     NEW = "new"          # 新增：目标端不存在
     UPDATED = "updated"  # 更新：源端 mtime 更新或大小不同
     SKIP = "skip"        # 跳过：目标端已存在且不比源端旧
+    EXTRA = "extra"      # 多余：目标端存在但源端已不存在（待删除候选）
     COPY = "copy"        # 日志：实际复制
+    DELETE = "delete"    # 日志：删除多余文件
     FAIL = "fail"        # 日志：失败
 
 
@@ -49,11 +51,12 @@ class DiffResult:
     new_items: list[DiffItem] = field(default_factory=list)
     updated_items: list[DiffItem] = field(default_factory=list)
     skipped_items: list[DiffItem] = field(default_factory=list)
+    extra_items: list[DiffItem] = field(default_factory=list)
 
     @property
     def pending_items(self) -> list[DiffItem]:
-        """待备份清单（新增 + 更新）。"""
-        return self.new_items + self.updated_items
+        """待备份清单（新增 + 更新 + 待删除）。"""
+        return self.new_items + self.updated_items + self.extra_items
 
     @property
     def new_count(self) -> int:
@@ -68,8 +71,12 @@ class DiffResult:
         return len(self.skipped_items)
 
     @property
+    def extra_count(self) -> int:
+        return len(self.extra_items)
+
+    @property
     def pending_bytes(self) -> int:
-        return sum(i.size for i in self.pending_items)
+        return sum(i.size for i in self.new_items + self.updated_items)
 
 
 @dataclass
@@ -95,6 +102,7 @@ class CopyProgress:
     total_bytes: int = 0
     copied: int = 0
     skipped: int = 0
+    deleted: int = 0
     failed: int = 0
     speed_bps: float = 0.0       # 字节/秒
     eta_seconds: float = 0.0     # 预计剩余秒数

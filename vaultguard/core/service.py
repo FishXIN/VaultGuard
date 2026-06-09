@@ -40,6 +40,7 @@ class BackupService:
             mtime_tolerance=s.mtime_tolerance,
             compare_size=s.compare_size,
             exclude_patterns=s.exclude_patterns,
+            find_extras=s.delete_sync,
             progress_cb=progress_cb,
         )
 
@@ -80,8 +81,9 @@ class BackupService:
         with open(log_file, "a", encoding="utf-8") as f:
             f.write(f"[{ts}] 任务 #{task_id}\n")
             f.write(f"  源: {source}\n  目标: {target}\n")
-            f.write(f"  复制 {prog.copied} / 跳过 {prog.skipped} / 失败 {prog.failed}"
-                    f"（共 {prog.total_files} 个待处理文件）\n")
+            f.write(f"  复制 {prog.copied} / 跳过 {prog.skipped} / "
+                    f"删除 {prog.deleted} / 失败 {prog.failed}"
+                    f"（共 {prog.total_files} 个待处理项）\n")
             f.write(f"  传输 {prog.transferred_bytes} 字节\n\n")
 
     def list_tasks(self, limit: int = 100):

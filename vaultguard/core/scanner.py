@@ -155,6 +155,7 @@ def compare(
     mtime_tolerance: float = 2.0,
     compare_size: bool = True,
     exclude_patterns: Optional[list[str]] = None,
+    find_extras: bool = False,
     progress_cb: Optional[Callable[[CompareProgress], None]] = None,
 ) -> DiffResult:
     """对比源目录与目标目录，生成待备份清单。
@@ -163,6 +164,8 @@ def compare(
       - 新增（new）：目标端不存在 → 需复制
       - 更新（updated）：源端 mtime 更新（超过容差），或大小不同 → 需覆盖
       - 跳过（skip）：目标端已存在且不比源端旧
+      - 多余（extra）：``find_extras=True`` 时，目标端存在但源端已不存在
+        的文件，会进入 ``extra_items``，供调用方决定是否同步删除。
 
     mtime 对比留容差，规避 FAT32 等文件系统精度差异导致的误判。
     """
@@ -251,4 +254,23 @@ def compare(
     if progress_cb:
         emit("comparing", count, total_files or count, finished=True,
              progress_ratio=1.0)
+
+    if find_extras and target.exists():
+        # 反向扫描目标目录，找出源端已删除（或被排除规则隔离）的文件。
+        source_rels = {
+            it.rel_path for it in result.new_items
+        } | {it.rel_path for it in result.updated_items} | {
+            it.rel_path for it in result.skipped_items
+        }
+        for entry in scan_directory(target, exclude_patterns):
+            if entry.rel_path in source_rels:
+                continue
+            src_file = source / entry.rel_path
+            if src_file.exists():
+                # 源文件存在但被排除/无法 stat：保守起见不视作多余
+                continue
+            result.extra_items.append(
+                DiffItem(entry.rel_path, Action.EXTRA, entry.size,
+                         entry.mtime, entry.mtime, "extra")
+            )
     return result

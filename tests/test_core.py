@@ -191,6 +191,51 @@ def test_scan_progress_is_continuous():
     print("PASS test_scan_progress_is_continuous")
 
 
+def test_delete_sync():
+    """删除同步：源文件被删后，开启 delete_sync 应同步删除目标多余文件，
+    并在 file_logs 中记录 delete 动作。"""
+    d = tempfile.mkdtemp()
+    src, dst, data = Path(d)/"s", Path(d)/"t", Path(d)/"data"
+    setup_tree(src, {"keep.txt": "k", "stale/old.txt": "x", "stale/sub/deep.bin": b"y"})
+    svc = BackupService(data)
+
+    # 第一次完整备份，让目标拥有所有文件
+    diff = svc.compare(str(src), str(dst))
+    tid = svc.create_task(str(src), str(dst), diff)
+    svc.execute(tid, str(src), str(dst))
+
+    # 删除源文件，开启 delete_sync 后再次对比
+    (src/"stale/old.txt").unlink()
+    (src/"stale/sub/deep.bin").unlink()
+    svc.settings.delete_sync = True
+    svc.settings.use_recycle = False  # 测试中走物理删除避免触发 GUI 回收
+
+    diff2 = svc.compare(str(src), str(dst))
+    assert diff2.extra_count == 2, f"expected 2 extras, got {diff2.extra_count}"
+    assert {it.rel_path for it in diff2.extra_items} == {
+        "stale/old.txt", "stale/sub/deep.bin"
+    }
+
+    tid2 = svc.create_task(str(src), str(dst), diff2)
+    prog, _ = svc.execute(tid2, str(src), str(dst))
+    assert prog.deleted == 2 and prog.failed == 0, \
+        f"deleted={prog.deleted} failed={prog.failed}"
+    assert not (dst/"stale/old.txt").exists()
+    assert not (dst/"stale/sub/deep.bin").exists()
+    assert (dst/"keep.txt").exists()
+
+    logs = svc.get_file_logs(tid2)
+    actions = sorted(lg["action"] for lg in logs)
+    assert actions == ["delete", "delete"], f"file_logs actions={actions}"
+
+    task = svc.db.get_task(tid2)
+    assert task["deleted_files"] == 2, task["deleted_files"]
+
+    svc.close()
+    shutil.rmtree(d)
+    print("PASS test_delete_sync")
+
+
 if __name__ == "__main__":
     test_atomicity_and_mtime()
     test_update_detection()
@@ -198,4 +243,5 @@ if __name__ == "__main__":
     test_resume()
     test_exclude()
     test_scan_progress_is_continuous()
+    test_delete_sync()
     print("\n=== ALL TESTS PASSED ===")

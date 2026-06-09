@@ -26,6 +26,7 @@ CREATE TABLE IF NOT EXISTS backup_tasks (
   copied_files INTEGER DEFAULT 0,
   skipped_files INTEGER DEFAULT 0,
   failed_files INTEGER DEFAULT 0,
+  deleted_files INTEGER DEFAULT 0,
   total_bytes INTEGER DEFAULT 0
 );
 
@@ -67,7 +68,17 @@ class Database:
         self._conn.row_factory = sqlite3.Row
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.executescript(SCHEMA)
+        self._migrate()
         self._conn.commit()
+
+    def _migrate(self) -> None:
+        """对旧版本数据库做幂等的列补齐，避免历史用户升级后报错。"""
+        cur = self._conn.execute("PRAGMA table_info(backup_tasks)")
+        cols = {row["name"] for row in cur.fetchall()}
+        if "deleted_files" not in cols:
+            self._conn.execute(
+                "ALTER TABLE backup_tasks ADD COLUMN deleted_files INTEGER DEFAULT 0"
+            )
 
     def close(self) -> None:
         with self._lock:
@@ -111,11 +122,12 @@ class Database:
             self._conn.commit()
 
     def update_task_counts(self, task_id: int, copied: int, skipped: int,
-                           failed: int) -> None:
+                           failed: int, deleted: int = 0) -> None:
         with self._lock:
             self._conn.execute(
-                "UPDATE backup_tasks SET copied_files=?, skipped_files=?, failed_files=? WHERE id=?",
-                (copied, skipped, failed, task_id),
+                "UPDATE backup_tasks SET copied_files=?, skipped_files=?, "
+                "failed_files=?, deleted_files=? WHERE id=?",
+                (copied, skipped, failed, deleted, task_id),
             )
             self._conn.commit()
 

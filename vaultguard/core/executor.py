@@ -5,12 +5,15 @@
   - 覆盖前不破坏旧文件（临时文件机制天然满足）。
   - 完整性校验：大小校验，可选 hash。
   - 失败隔离：单文件失败不中断任务。
-  - 默认非破坏：绝不删除目标端文件。
+  - 删除同步：开启 ``delete_sync`` 时，目标端多余文件按设置走回收站或物理删除；
+    回收站失败自动降级，确保用户数据可追溯。
 """
 from __future__ import annotations
 
 import os
 import shutil
+import subprocess
+import sys
 import threading
 import time
 from pathlib import Path
@@ -128,6 +131,54 @@ class BackupExecutor:
             time.sleep(0.1 * (i + 1))
         return last
 
+    # ---------- 单文件删除（多余文件回收 / 物理删除） ----------
+    def _delete_one(self, dst: Path) -> tuple[bool, str]:
+        """按设置删除单个目标文件。
+
+        - 默认（``use_recycle=True``）尝试调用系统回收站。
+          macOS 借助 AppleScript 把文件移入"废纸篓"，失败时降级为物理删除。
+        - ``use_recycle=False`` 直接物理删除。
+        - 文件不存在视作删除成功（幂等）。
+        """
+        if not dst.exists():
+            return True, "ok_missing"
+
+        if not self.settings.use_recycle:
+            try:
+                dst.unlink()
+                return True, "ok_unlink"
+            except OSError as e:
+                return False, f"error_unlink:{e.__class__.__name__}"
+
+        if sys.platform == "darwin":
+            script = (
+                'tell application "Finder" to delete (POSIX file '
+                f'"{str(dst).replace(chr(34), chr(92) + chr(34))}" as alias)'
+            )
+            try:
+                subprocess.run(
+                    ["osascript", "-e", script],
+                    check=True,
+                    timeout=10,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+                return True, "ok_recycle"
+            except (subprocess.CalledProcessError, subprocess.TimeoutExpired,
+                    FileNotFoundError):
+                pass  # 降级为物理删除
+        # Linux / Windows / 兜底：尝试 send2trash，缺失时物理删除
+        try:
+            import send2trash  # type: ignore
+            send2trash.send2trash(str(dst))
+            return True, "ok_recycle"
+        except Exception:  # noqa: BLE001
+            try:
+                dst.unlink()
+                return True, "ok_unlink_fallback"
+            except OSError as e:
+                return False, f"error_unlink:{e.__class__.__name__}"
+
     # ---------- 任务执行 ----------
     def run(
         self,
@@ -146,17 +197,28 @@ class BackupExecutor:
         items = self.db.get_pending_items(task_id, only_undone=resume)
         all_items = self.db.get_pending_items(task_id, only_undone=False)
         already_done = sum(1 for it in all_items if it["done"])
+        # 已完成项里区分"复制成功"与"删除成功"，恢复时不丢失统计
+        already_copied = sum(
+            1 for it in all_items
+            if it["done"] and it["action"] != Action.EXTRA.value)
+        already_deleted = sum(
+            1 for it in all_items
+            if it["done"] and it["action"] == Action.EXTRA.value)
 
         total_files = len(all_items)
-        total_bytes = sum(it["size"] for it in all_items)
-        done_bytes = sum(it["size"] for it in all_items if it["done"])
+        total_bytes = sum(it["size"] for it in all_items
+                          if it["action"] != Action.EXTRA.value)
+        done_bytes = sum(
+            it["size"] for it in all_items
+            if it["done"] and it["action"] != Action.EXTRA.value)
 
         prog = CopyProgress(
             total_files=total_files,
             total_bytes=total_bytes,
             processed_files=already_done,
             transferred_bytes=done_bytes,
-            copied=already_done,
+            copied=already_copied,
+            deleted=already_deleted,
         )
 
         self.db.update_task_status(task_id, TaskStatus.RUNNING)
@@ -172,19 +234,37 @@ class BackupExecutor:
                     task_id, TaskStatus.PAUSED,
                     resume_point=f"{prog.processed_files}/{total_files}",
                 )
-                self.db.update_task_counts(task_id, prog.copied, prog.skipped, prog.failed)
+                self.db.update_task_counts(
+                    task_id, prog.copied, prog.skipped, prog.failed,
+                    prog.deleted)
                 return prog
 
             rel = it["file_path"]
             src_file = source / rel
             dst_file = target / rel
             prog.current_file = rel
+            is_delete = it["action"] == Action.EXTRA.value
 
-            if not src_file.exists():
+            if is_delete:
+                ok, reason = self._delete_one(dst_file)
+                if ok:
+                    prog.deleted += 1
+                    self.db.mark_item_done(it["id"])
+                    self.db.add_file_log(task_id, rel, Action.DELETE, reason,
+                                         it["size"], False)
+                else:
+                    prog.failed += 1
+                    self.db.add_file_log(task_id, rel, Action.FAIL, reason,
+                                         it["size"], False)
+                prog.processed_files += 1
+            elif not src_file.exists():
                 # 源文件已不存在，记录失败但不中断
                 prog.failed += 1
                 self.db.add_file_log(task_id, rel, Action.FAIL, "error_src_missing",
                                      it["size"], False)
+                prog.processed_files += 1
+                prog.transferred_bytes += it["size"]
+                bytes_this_run += it["size"]
             else:
                 ok, verified, reason = self._copy_with_retry(src_file, dst_file)
                 if ok:
@@ -196,13 +276,12 @@ class BackupExecutor:
                     prog.failed += 1
                     self.db.add_file_log(task_id, rel, Action.FAIL, reason,
                                          it["size"], False)
-
-            prog.processed_files += 1
-            prog.transferred_bytes += it["size"]
-            bytes_this_run += it["size"]
+                prog.processed_files += 1
+                prog.transferred_bytes += it["size"]
+                bytes_this_run += it["size"]
 
             elapsed = time.time() - start
-            if elapsed > 0:
+            if elapsed > 0 and total_bytes > 0:
                 prog.speed_bps = bytes_this_run / elapsed
                 remaining = total_bytes - prog.transferred_bytes
                 prog.eta_seconds = remaining / prog.speed_bps if prog.speed_bps > 0 else 0
@@ -213,7 +292,8 @@ class BackupExecutor:
         # 收尾
         prog.finished = True
         final_status = TaskStatus.COMPLETED if prog.failed == 0 else TaskStatus.FAILED
-        self.db.update_task_counts(task_id, prog.copied, prog.skipped, prog.failed)
+        self.db.update_task_counts(
+            task_id, prog.copied, prog.skipped, prog.failed, prog.deleted)
         self.db.update_task_status(task_id, final_status,
                                    resume_point=f"{prog.processed_files}/{total_files}")
         if progress_cb:
