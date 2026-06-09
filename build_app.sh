@@ -77,8 +77,14 @@ env "$VIEW_ENV=$EMPTY_BIN" "$PYINSTALLER" main.py \
   --exclude-module pdb \
   --distpath dist
 
-APP="dist/VaultGuard.app"
-[ -d "$APP" ] || { echo "打包失败：未生成 $APP"; exit 1; }
+APP_BUILT="dist/VaultGuard.app"
+[ -d "$APP_BUILT" ] || { echo "打包失败：未生成 $APP_BUILT"; exit 1; }
+
+# 仅重命名最终交付的 .app 包名为中文品牌「备份了嘛」；内部可执行文件、
+# bundle id、Python 包名仍保持英文 VaultGuard/vaultguard，避免引用问题。
+APP="dist/备份了嘛.app"
+rm -rf "$APP"
+mv "$APP_BUILT" "$APP"
 
 echo "==> 替换主 .app 的图标为 VaultGuard 自定义图标"
 ICON="assets/icon.icns"
@@ -128,10 +134,10 @@ CLIENT_MACOS="$CLIENT_APP/Contents/MacOS"
 if [ -f "$CLIENT_MACOS/$RUNTIME_TITLE" ]; then
   mv "$CLIENT_MACOS/$RUNTIME_TITLE" "$CLIENT_MACOS/VaultGuard"
 fi
-/usr/libexec/PlistBuddy -c "Set :CFBundleName VaultGuard" "$PL" 2>/dev/null || \
-  /usr/libexec/PlistBuddy -c "Add :CFBundleName string VaultGuard" "$PL"
-/usr/libexec/PlistBuddy -c "Set :CFBundleDisplayName VaultGuard" "$PL" 2>/dev/null || \
-  /usr/libexec/PlistBuddy -c "Add :CFBundleDisplayName string VaultGuard" "$PL"
+/usr/libexec/PlistBuddy -c "Set :CFBundleName 备份了嘛" "$PL" 2>/dev/null || \
+  /usr/libexec/PlistBuddy -c "Add :CFBundleName string 备份了嘛" "$PL"
+/usr/libexec/PlistBuddy -c "Set :CFBundleDisplayName 备份了嘛" "$PL" 2>/dev/null || \
+  /usr/libexec/PlistBuddy -c "Add :CFBundleDisplayName string 备份了嘛" "$PL"
 /usr/libexec/PlistBuddy -c "Set :CFBundleExecutable VaultGuard" "$PL" 2>/dev/null || \
   /usr/libexec/PlistBuddy -c "Add :CFBundleExecutable string VaultGuard" "$PL"
 /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier com.vaultguard.client" "$PL" 2>/dev/null || \
@@ -206,6 +212,6 @@ killall Dock 2>/dev/null || true
 killall Finder 2>/dev/null || true
 
 echo "==> 完成：$APP"
-echo "    双击 dist/VaultGuard.app 即可运行。"
+echo "    双击 $APP 即可运行。"
 echo "    GitHub 压缩包：$ZIP"
 echo "    校验文件：$CHECKSUMS"
