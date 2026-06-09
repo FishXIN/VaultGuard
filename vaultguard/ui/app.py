@@ -1797,7 +1797,6 @@ class VaultGuardApp:
 
         def _settings_list(*controls) -> ft.Container:
             return ft.Container(
-                width=736,
                 bgcolor=T.BG,
                 border=ft.Border.all(1, T.BORDER),
                 border_radius=T.RADIUS_MD,
@@ -1924,17 +1923,16 @@ class VaultGuardApp:
             ),
         )
 
+        # 设置面板自适应：用 Row 强制让面板撑满 content 区域可用宽度，
+        # 不再写死 736px，从而在窗口任意宽度下都不会出现右侧大片空白。
         self._set_content(ft.Column([
             self._page_header("设置"),
             ft.Container(height=1, bgcolor=T.BORDER_LIGHT),
-            ft.Container(
-                content=ft.Column([
-                    settings_list,
-                    ft.Row([save_btn], alignment=ft.MainAxisAlignment.END),
-                ], spacing=T.SP_4, tight=True),
-                width=736,
-            ),
-        ], spacing=T.SP_5, scroll=ft.ScrollMode.AUTO))
+            ft.Row([
+                ft.Container(content=settings_list, expand=True),
+            ], spacing=0),
+            ft.Row([save_btn], alignment=ft.MainAxisAlignment.END),
+        ], spacing=T.SP_4, scroll=ft.ScrollMode.AUTO))
 
     def _save_settings(self) -> None:
         s = self.svc.settings
