@@ -97,7 +97,7 @@ def shadow_md() -> ft.BoxShadow:
 
 # ============ 5. 布局 ============
 SIDEBAR_W = 156
-HEADER_H = 56
+HEADER_H = 44
 
 
 # ============ 6. 动效（极简）============

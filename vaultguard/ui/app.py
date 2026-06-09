@@ -79,6 +79,18 @@ _NAV_SVG_SETTING = (
     '7.04426 9.9 7.98314 9.9Z" stroke="#0B0B0F" stroke-linejoin="round"/>'
     '</svg>'
 )
+# 目录选择按钮（assets/Icon/Document.svg：打开的文件夹线性图标）
+_NAV_SVG_FOLDER = (
+    '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" '
+    'xmlns="http://www.w3.org/2000/svg">'
+    '<path d="M3 7.64V6.2C3 5.54 3.45 5 4 5H6.3C6.54 5 6.78 5.108 6.96 5.312L8 '
+    '6.56H12C12.55 6.56 13 7.1 13 7.76V8" stroke="#0B0B0F" stroke-linecap="round" '
+    'stroke-linejoin="round"/>'
+    '<path d="M3 8C3 7.45 3.45 7 4 7H12C12.55 7 13 7.45 13 8V11.8C13 12.35 12.55 '
+    '12.8 12 12.8H4C3.45 12.8 3 12.35 3 11.8V8Z" stroke="#0B0B0F" '
+    'stroke-linecap="round" stroke-linejoin="round"/>'
+    '</svg>'
+)
 
 
 def _nav_svg_icon(svg: str, color: str, size: int = 18) -> "ft.Image":
@@ -369,7 +381,11 @@ class VaultGuardApp:
         self.content = ft.Container(
             content=None,
             expand=True,
-            padding=T.SP_6,
+            # 让右侧页面标题文字上沿与左侧导航文字上沿严格对齐：
+            # 左侧文字上沿 = HEADER_H + 13(导航容器 40px 内文字垂直居中偏移)
+            # 右侧文字上沿 = HEADER_H + padding.top → 取 13
+            padding=ft.Padding.only(
+                left=T.SP_6, right=T.SP_6, top=13, bottom=T.SP_6),
             bgcolor=T.BG,
         )
 
@@ -422,9 +438,22 @@ class VaultGuardApp:
         def _hover(e: ft.HoverEvent, c=item) -> None:
             try:
                 i = c.data[0]
-                if i == self._nav_index:
-                    return
-                c.bgcolor = T.FILL if e.data == "true" else None
+                active_now = i == self._nav_index
+                hovering = str(e.data).lower() == "true"
+                fg = T.PRIMARY_HOVER if hovering else (
+                    T.PRIMARY if active_now else T.TEXT_PRIMARY)
+                row = c.content
+                row.controls[0].color = fg
+                row.controls[1].color = fg
+                c.bgcolor = (
+                    "#DCEBFF" if active_now and hovering
+                    else T.PRIMARY_BG if active_now
+                    else T.FILL_HOVER if hovering
+                    else None
+                )
+                c.border = ft.Border(left=ft.BorderSide(
+                    2, T.PRIMARY_HOVER if active_now and hovering
+                    else T.PRIMARY if active_now else "#00000000"))
                 c.update()
             except Exception:
                 pass
@@ -661,23 +690,21 @@ class VaultGuardApp:
         self.src_field = self._path_field(
             "源目录", self.source_path,
             "路径",
-            lambda e: setattr(self, "source_path", e.control.value))
+            lambda e: setattr(self, "source_path", e.control.value),
+            suffix=self._picker_btn(True))
         self.dst_field = self._path_field(
             "目标目录", self.target_path,
             "路径",
-            lambda e: setattr(self, "target_path", e.control.value))
+            lambda e: setattr(self, "target_path", e.control.value),
+            suffix=self._picker_btn(False))
 
         self._set_task_content(ft.Column([
             self._page_header("你好，今天要备份点什么～"),
             ft.Container(height=1, bgcolor=T.BORDER_LIGHT),
             _card(
                 _section_title("选择目录"),
-                ft.Row([self.src_field, self._picker_btn(True)],
-                       vertical_alignment=ft.CrossAxisAlignment.END,
-                       spacing=T.SP_2),
-                ft.Row([self.dst_field, self._picker_btn(False)],
-                       vertical_alignment=ft.CrossAxisAlignment.END,
-                       spacing=T.SP_2),
+                self.src_field,
+                self.dst_field,
                 ft.Container(height=T.SP_2),
                 ft.Row([
                     _primary_button("开始对比",
@@ -688,13 +715,14 @@ class VaultGuardApp:
             ),
         ], spacing=T.SP_5, scroll=ft.ScrollMode.AUTO))
 
-    def _path_field(self, label, value, hint, on_change) -> ft.TextField:
+    def _path_field(self, label, value, hint, on_change, suffix=None) -> ft.TextField:
         return ft.TextField(
             label=label,
             value=value,
             hint_text=hint,
             on_change=on_change,
             expand=True,
+            suffix=suffix,
             border_radius=T.RADIUS,
             border_color=T.BORDER,
             focused_border_color=T.PRIMARY,
@@ -706,11 +734,9 @@ class VaultGuardApp:
     def _picker_btn(self, is_source: bool) -> ft.Container:
         prompt = "选择源目录" if is_source else "选择目标目录"
         b = ft.Container(
-            content=ft.Icon(ft.Icons.FOLDER_OPEN_OUTLINED,
-                            color=T.TEXT_PRIMARY, size=18),
-            width=32, height=32,
-            bgcolor=T.BG,
-            border=ft.Border.all(1, T.BORDER),
+            content=_nav_svg_icon(_NAV_SVG_FOLDER, T.TEXT_TERTIARY, 18),
+            width=28, height=28,
+            bgcolor=None,
             border_radius=T.RADIUS,
             alignment=ft.Alignment.CENTER,
             tooltip="选择源目录" if is_source else "选择目标目录",
@@ -722,8 +748,8 @@ class VaultGuardApp:
         def _hover(e: ft.HoverEvent, ctrl=b) -> None:
             try:
                 on = e.data == "true"
-                ctrl.border = ft.Border.all(1, T.PRIMARY if on else T.BORDER)
-                ctrl.content.color = T.PRIMARY if on else T.TEXT_PRIMARY
+                ctrl.bgcolor = T.PRIMARY_BG if on else None
+                ctrl.content.color = T.PRIMARY if on else T.TEXT_TERTIARY
                 ctrl.update()
             except Exception:
                 pass
