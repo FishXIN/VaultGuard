@@ -79,15 +79,26 @@ _NAV_SVG_SETTING = (
     '7.04426 9.9 7.98314 9.9Z" stroke="#0B0B0F" stroke-linejoin="round"/>'
     '</svg>'
 )
-# 目录选择按钮（assets/Icon/Document.svg：打开的文件夹线性图标）
+# 目录选择按钮（assets/Icon/Contents.svg：打开的文件夹/内容图标）
 _NAV_SVG_FOLDER = (
     '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" '
     'xmlns="http://www.w3.org/2000/svg">'
-    '<path d="M3 7.64V6.2C3 5.54 3.45 5 4 5H6.3C6.54 5 6.78 5.108 6.96 5.312L8 '
-    '6.56H12C12.55 6.56 13 7.1 13 7.76V8" stroke="#0B0B0F" stroke-linecap="round" '
+    '<path d="M3 5.64V4.2C3 3.54 3.45 3 4 3H6.3C6.54 3 6.78 3.108 6.96 3.312L8 '
+    '4.56H12C12.55 4.56 13 5.1 13 5.76V6" stroke="#0B0B0F" stroke-linecap="round" '
     'stroke-linejoin="round"/>'
     '<path d="M3 8C3 7.45 3.45 7 4 7H12C12.55 7 13 7.45 13 8V11.8C13 12.35 12.55 '
     '12.8 12 12.8H4C3.45 12.8 3 12.35 3 11.8V8Z" stroke="#0B0B0F" '
+    'stroke-linecap="round" stroke-linejoin="round"/>'
+    '</svg>'
+)
+# 文档图标（assets/Icon/Document.svg：单页文档线性图标）—— 历史记录"详情"按钮
+_NAV_SVG_DOCUMENT = (
+    '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" '
+    'xmlns="http://www.w3.org/2000/svg">'
+    '<path d="M4.5 1.5H9L12.5 5V13.5C12.5 14.05 12.05 14.5 11.5 14.5H4.5C3.95 '
+    '14.5 3.5 14.05 3.5 13.5V2.5C3.5 1.95 3.95 1.5 4.5 1.5Z" stroke="#0B0B0F" '
+    'stroke-linecap="round" stroke-linejoin="round"/>'
+    '<path d="M9 1.5V4C9 4.55 9.45 5 10 5H12.5" stroke="#0B0B0F" '
     'stroke-linecap="round" stroke-linejoin="round"/>'
     '</svg>'
 )
@@ -263,6 +274,25 @@ def _section_title(text: str) -> ft.Text:
 def _muted_text(text: str, size: int = T.TEXT_13) -> ft.Text:
     return ft.Text(text, size=size, color=T.TEXT_TERTIARY,
                    font_family=T.FONT_SANS)
+
+
+def _detail_summary_chip(icon, color: str, label: str, count: int) -> ft.Container:
+    """详情页头部摘要徽标：复制 / 删除 / 失败 数量。"""
+    bg_map = {T.SUCCESS: T.SUCCESS_BG, T.DANGER: T.DANGER_BG,
+              T.WARNING: T.WARNING_BG}
+    return ft.Container(
+        content=ft.Row([
+            ft.Icon(icon, size=14, color=color),
+            ft.Text(label, size=T.TEXT_12, color=T.TEXT_PRIMARY,
+                    weight=T.FW_MEDIUM),
+            ft.Text(str(count), size=T.TEXT_13, color=color,
+                    font_family=T.FONT_MONO, weight=T.FW_MEDIUM),
+        ], spacing=T.SP_2,
+           vertical_alignment=ft.CrossAxisAlignment.CENTER),
+        bgcolor=bg_map.get(color, T.FILL),
+        padding=ft.Padding.symmetric(vertical=4, horizontal=10),
+        border_radius=T.RADIUS,
+    )
 
 
 def _mono_text(text: str, size: int = T.TEXT_13,
@@ -733,28 +763,54 @@ class VaultGuardApp:
 
     def _picker_btn(self, is_source: bool) -> ft.Container:
         prompt = "选择源目录" if is_source else "选择目标目录"
+        # 配色对齐左侧导航栏：默认灰底（FILL_HOVER #F2F3F5）+ 灰图标；
+        # hover 切到导航选中态浅蓝（PRIMARY_BG #E8F3FF）+ 蓝图标；
+        # 按下瞬态再深一档（#DCEBFF，与导航 hover-active 一致）。
+        # 不使用 animate / 不切尺寸，避免 suffix 重布局造成的卡顿。
+        idle_bg = T.FILL_HOVER          # #F2F3F5
+        hover_bg = T.PRIMARY_BG         # #E8F3FF
+        active_bg = "#DCEBFF"           # 与左侧导航 hover-active 同色
+
+        icon = _nav_svg_icon(_NAV_SVG_FOLDER, T.TEXT_TERTIARY, 18)
         b = ft.Container(
-            content=_nav_svg_icon(_NAV_SVG_FOLDER, T.TEXT_TERTIARY, 18),
+            content=icon,
             width=28, height=28,
-            bgcolor=None,
+            bgcolor=idle_bg,
             border_radius=T.RADIUS,
             alignment=ft.Alignment.CENTER,
+            # TextField suffix 默认按文本基线对齐，会让 28x28 按钮显得偏上。
+            # 通过下移 margin 让按钮与输入文字行视觉居中（输入区高约 36，
+            # 按钮 28，单边 4px 即可对齐）。
+            margin=ft.Padding.only(top=4),
             tooltip="选择源目录" if is_source else "选择目标目录",
             on_click=self._safe(prompt,
                                 lambda e, s=is_source: self._pick_dir(s)),
-            animate=ft.Animation(T.DUR_FAST, T.EASE),
         )
 
-        def _hover(e: ft.HoverEvent, ctrl=b) -> None:
+        def _paint(state: str, ctrl=b, ic=icon) -> None:
+            # state: "idle" | "hover" | "active"
             try:
-                on = e.data == "true"
-                ctrl.bgcolor = T.PRIMARY_BG if on else None
-                ctrl.content.color = T.PRIMARY if on else T.TEXT_TERTIARY
+                if state == "active":
+                    ctrl.bgcolor = active_bg
+                    ic.color = T.PRIMARY
+                elif state == "hover":
+                    ctrl.bgcolor = hover_bg
+                    ic.color = T.PRIMARY
+                else:
+                    ctrl.bgcolor = idle_bg
+                    ic.color = T.TEXT_TERTIARY
                 ctrl.update()
             except Exception:
                 pass
 
-        b.on_hover = _hover
+        b.on_hover = lambda e: _paint(
+            "hover" if str(e.data).lower() == "true" else "idle")
+        # TapDownEvent / TapUpEvent 在部分 Flet 版本中可能未实现，安全降级
+        for attr, st in (("on_tap_down", "active"), ("on_tap_up", "hover")):
+            try:
+                setattr(b, attr, lambda e, s=st: _paint(s))
+            except Exception:
+                pass
         return b
 
     def _pick_dir(self, is_source: bool) -> None:
@@ -974,6 +1030,12 @@ class VaultGuardApp:
         self._cf_selected = {id(it) for it in self._cf_items}
         self._cf_sort_key = "name"
         self._cf_sort_asc = True
+        # 文件树展开集合：None 表示首次渲染时默认全部展开
+        self._cf_expanded = None
+        # 待错位入场动画的目录路径前缀（仅对刚展开的子行生效）
+        self._cf_anim_prefix: Optional[str] = None
+        # 收集本轮渲染中需要播放入场动画的行，渲染完成后由独立线程错位激活
+        self._cf_anim_rows: list = []
 
         # 顶部统计值随勾选动态更新
         self._cf_stat_new = ft.Text(
@@ -982,6 +1044,9 @@ class VaultGuardApp:
         self._cf_stat_upd = ft.Text(
             str(diff.updated_count), size=T.TEXT_28, weight=T.FW_MEDIUM,
             color=T.WARNING, font_family=T.FONT_MONO)
+        self._cf_stat_del = ft.Text(
+            str(diff.extra_count), size=T.TEXT_28, weight=T.FW_MEDIUM,
+            color=T.DANGER, font_family=T.FONT_MONO)
         self._cf_stat_bytes = ft.Text(
             fmt_size(diff.pending_bytes), size=T.TEXT_28, weight=T.FW_MEDIUM,
             color=T.PRIMARY, font_family=T.FONT_MONO)
@@ -1043,6 +1108,9 @@ class VaultGuardApp:
                     vline(),
                     stat_cell(self._cf_stat_upd, "更新", T.WARNING,
                               ft.Icons.AUTORENEW_ROUNDED),
+                    vline(),
+                    stat_cell(self._cf_stat_del, "删除", T.DANGER,
+                              ft.Icons.DELETE_OUTLINE_ROUNDED),
                     vline(),
                     stat_cell(ft.Text(str(diff.skipped_count), size=T.TEXT_28,
                                       weight=T.FW_MEDIUM, color=T.TEXT_TERTIARY,
@@ -1133,6 +1201,37 @@ class VaultGuardApp:
         self._cf_items.sort(key=fn, reverse=not self._cf_sort_asc)
 
     # ---------- 确认页：列表与勾选 ----------
+    def _cf_build_tree(self) -> dict:
+        """将待备份清单按目录层级聚合为树结构。
+
+        节点格式：{"dirs": {name: node}, "files": [DiffItem], "path": str}
+        """
+        root: dict = {"dirs": {}, "files": [], "path": ""}
+        for it in self._cf_items:
+            parts = Path(it.rel_path).parts
+            node = root
+            for p in parts[:-1]:
+                child = node["dirs"].get(p)
+                if child is None:
+                    child_path = (node["path"] + "/" + p) if node["path"] else p
+                    child = {"dirs": {}, "files": [], "path": child_path}
+                    node["dirs"][p] = child
+                node = child
+            node["files"].append(it)
+        return root
+
+    def _cf_dir_items(self, node: dict) -> list:
+        """收集目录节点下的所有文件项（含递归）。"""
+        result = list(node["files"])
+        for sub in node["dirs"].values():
+            result.extend(self._cf_dir_items(sub))
+        return result
+
+    def _cf_collect_dir_paths(self, node: dict, out: set) -> None:
+        for name, sub in node["dirs"].items():
+            out.add(sub["path"])
+            self._cf_collect_dir_paths(sub, out)
+
     def _cf_build_listview(self):
         self._cf_apply_sort()
         items = self._cf_items
@@ -1148,43 +1247,256 @@ class VaultGuardApp:
                 padding=T.SP_8,
                 alignment=ft.Alignment.CENTER,
             )
-        rows = [self._cf_row(it) for it in items[:500]]
-        if len(items) > 500:
-            rows.append(ft.Container(
-                content=_muted_text(
-                    f"... 以及另外 {len(items) - 500} 个文件（默认随全选一并备份）",
-                    size=T.TEXT_12),
-                padding=ft.Padding.symmetric(vertical=8, horizontal=T.SP_4)))
+        tree = self._cf_build_tree()
+        # 默认全部收起，避免一进来就被海量文件淹没
+        if self._cf_expanded is None:
+            self._cf_expanded = set()
+        rows: list = []
+        self._cf_anim_rows = []
+        self._cf_render_node(tree, depth=0, rows=rows,
+                             animate_children=False)
         return ft.ListView(rows, spacing=0, expand=True)
 
-    def _cf_row(self, it) -> ft.Container:
+    def _cf_render_node(self, node: dict, depth: int, rows: list,
+                        animate_children: bool = False) -> None:
+        """递归渲染目录与文件行。
+
+        animate_children=True 表示当前节点处于"刚展开"链路上，其下所有子行
+        以隐藏初始态渲染，由调用方在渲染完成后错位激活动画。
+        遍历到子目录时，会再次比对 ``self._cf_anim_prefix``，从而支持嵌套
+        展开操作各自独立动画。
+        """
+        # 排序：目录按名称升序；文件按当前排序键
+        dir_names = sorted(node["dirs"].keys(), key=lambda s: s.lower())
+        for name in dir_names:
+            sub = node["dirs"][name]
+            row = self._cf_dir_row(name, sub, depth)
+            if animate_children:
+                self._cf_prepare_anim(row)
+            rows.append(row)
+            if sub["path"] in self._cf_expanded:
+                child_anim = animate_children or (
+                    self._cf_anim_prefix is not None
+                    and sub["path"] == self._cf_anim_prefix)
+                self._cf_render_node(sub, depth + 1, rows,
+                                     animate_children=child_anim)
+        fn = next(f for k, _l, f, _a in self._CF_SORT_DEFS
+                  if k == self._cf_sort_key)
+        files_sorted = sorted(node["files"], key=fn,
+                              reverse=not self._cf_sort_asc)
+        for it in files_sorted:
+            row = self._cf_file_row(it, depth)
+            if animate_children:
+                self._cf_prepare_anim(row)
+            rows.append(row)
+
+    def _cf_prepare_anim(self, row: ft.Container) -> None:
+        """把一行设置为入场前的隐藏初始态，并登记到待激活列表。"""
+        row.opacity = 0
+        row.animate_opacity = ft.Animation(T.DUR_BASE, T.EASE)
+        self._cf_anim_rows.append(row)
+
+    def _cf_dir_row(self, name: str, node: dict, depth: int) -> ft.Container:
+        path = node["path"]
+        expanded = path in self._cf_expanded
+        all_items = self._cf_dir_items(node)
+        sel = sum(1 for it in all_items if id(it) in self._cf_selected)
+        total = len(all_items)
+        checked = sel == total and total > 0
+        partial = 0 < sel < total
+        chevron = ft.Icon(
+            ft.Icons.KEYBOARD_ARROW_DOWN_ROUNDED if expanded
+            else ft.Icons.KEYBOARD_ARROW_RIGHT_ROUNDED,
+            size=16, color=T.TEXT_TERTIARY)
+        mark = self._cf_select_mark(
+            checked,
+            partial,
+            self._safe(
+                "选择文件夹",
+                lambda e, items=all_items, v=checked:
+                    self._cf_toggle_dir(items, not v)))
+        folder_icon = ft.Icon(
+            ft.Icons.FOLDER_OPEN_ROUNDED if expanded
+            else ft.Icons.FOLDER_ROUNDED,
+            size=15, color=T.TEXT_TERTIARY)
+        total_size = sum(it.size for it in all_items)
+
+        pill = ft.Container(
+            content=ft.Row([
+                ft.Container(content=chevron, width=18, height=18,
+                             alignment=ft.Alignment.CENTER),
+                mark,
+                folder_icon,
+                ft.Text(name, size=T.TEXT_13, expand=True,
+                        color=T.TEXT_TITLE, weight=T.FW_MEDIUM,
+                        overflow=ft.TextOverflow.ELLIPSIS),
+                ft.Text(f"{sel}/{total}", size=T.TEXT_12,
+                        color=T.TEXT_TERTIARY, font_family=T.FONT_MONO),
+                ft.Text(fmt_size(total_size), size=T.TEXT_12,
+                        color=T.TEXT_TERTIARY, font_family=T.FONT_MONO),
+            ], spacing=T.SP_2,
+               vertical_alignment=ft.CrossAxisAlignment.CENTER),
+            height=30,
+            padding=ft.Padding.only(left=T.SP_1, right=T.SP_3),
+            border_radius=T.RADIUS,
+            animate=ft.Animation(T.DUR_FAST, T.EASE),
+            on_click=self._safe(
+                "展开/收起目录",
+                lambda e, p=path: self._cf_toggle_expand(p)),
+            ink=False,
+        )
+        row = self._cf_tree_row(depth, pill)
+
+        def _hover(e: ft.HoverEvent, c=pill) -> None:
+            try:
+                c.bgcolor = T.FILL_HOVER if e.data == "true" else None
+                c.update()
+            except Exception:
+                pass
+
+        pill.on_hover = _hover
+        return row
+
+    def _cf_file_row(self, it, depth: int) -> ft.Container:
         iid = id(it)
-        kind = "success" if it.action.value == "new" else "warning"
-        cb = ft.Checkbox(
-            value=iid in self._cf_selected, active_color=T.PRIMARY,
-            on_change=self._safe(
+        action_val = it.action.value
+        if action_val == "new":
+            kind = "success"
+        elif action_val == "extra":
+            kind = "danger"
+        else:
+            kind = "warning"
+        selected = iid in self._cf_selected
+        mark = self._cf_select_mark(
+            selected,
+            False,
+            self._safe(
                 "选择备份文件",
-                lambda e, k=iid: self._cf_toggle(k, e.control.value)))
+                lambda e, k=iid, v=selected: self._cf_toggle(k, not v)))
+        name = Path(it.rel_path).name
+        if kind == "success":
+            action_color = T.SUCCESS
+        elif kind == "danger":
+            action_color = T.DANGER
+        else:
+            action_color = T.WARNING
+        pill = ft.Container(
+            content=ft.Row([
+                # chevron 占位，对齐目录行。
+                ft.Container(width=18, height=18),
+                mark,
+                ft.Container(
+                    content=_nav_svg_icon(_NAV_SVG_DOCUMENT,
+                                          T.TEXT_TERTIARY, 14),
+                    width=14, height=14,
+                    alignment=ft.Alignment.CENTER),
+                ft.Text(name, size=T.TEXT_13, expand=True,
+                        color=T.TEXT_TITLE,
+                        font_family=T.FONT_SANS,
+                        weight=T.FW_MEDIUM if selected else T.FW_REGULAR,
+                        overflow=ft.TextOverflow.ELLIPSIS),
+                ft.Container(width=6, height=6, border_radius=3,
+                             bgcolor=action_color),
+                ft.Text(fmt_size(it.size), size=T.TEXT_12,
+                        color=T.TEXT_TERTIARY, font_family=T.FONT_MONO),
+            ], spacing=T.SP_2,
+               vertical_alignment=ft.CrossAxisAlignment.CENTER),
+            height=30,
+            padding=ft.Padding.only(left=T.SP_1, right=T.SP_3),
+            border_radius=T.RADIUS,
+            animate=ft.Animation(T.DUR_FAST, T.EASE),
+            on_click=self._safe(
+                "选择备份文件",
+                lambda e, k=iid, v=selected: self._cf_toggle(k, not v)),
+            ink=False,
+        )
+        row = self._cf_tree_row(depth, pill)
+
+        def _hover(e: ft.HoverEvent, c=pill) -> None:
+            try:
+                c.bgcolor = T.FILL_HOVER if e.data == "true" else None
+                c.update()
+            except Exception:
+                pass
+
+        pill.on_hover = _hover
+        return row
+
+    def _cf_tree_row(self, depth: int, pill: ft.Container) -> ft.Container:
         return ft.Container(
             content=ft.Row([
-                cb,
-                _badge(it.action.value, kind),
-                ft.Text(it.rel_path, size=T.TEXT_13, expand=True,
-                        color=T.TEXT_TITLE, font_family=T.FONT_MONO,
-                        overflow=ft.TextOverflow.ELLIPSIS),
-                _mono_text(fmt_size(it.size), size=T.TEXT_12,
-                           color=T.TEXT_TERTIARY),
-            ], spacing=T.SP_3,
-               vertical_alignment=ft.CrossAxisAlignment.CENTER),
-            padding=ft.Padding.symmetric(vertical=4, horizontal=T.SP_4),
-            border=ft.Border(bottom=ft.BorderSide(1, T.BORDER_LIGHT)),
+                ft.Container(width=depth * 20),
+                ft.Container(content=pill, expand=True),
+            ], spacing=0),
+            padding=ft.Padding.symmetric(vertical=1, horizontal=T.SP_3),
         )
+
+    def _cf_select_mark(self, checked: bool, partial: bool,
+                        on_click) -> ft.Container:
+        content = None
+        if checked:
+            content = ft.Icon(ft.Icons.CHECK_ROUNDED, size=12, color=T.BG)
+        elif partial:
+            content = ft.Container(width=8, height=2, bgcolor=T.PRIMARY,
+                                   border_radius=1)
+        return ft.Container(
+            content=content,
+            width=14,
+            height=14,
+            alignment=ft.Alignment.CENTER,
+            bgcolor=T.PRIMARY if checked else T.BG,
+            border=ft.Border.all(1, T.PRIMARY if (checked or partial)
+                                 else T.BORDER),
+            border_radius=T.RADIUS_SM,
+            on_click=on_click,
+            ink=False,
+        )
+
+    def _cf_toggle_expand(self, path: str) -> None:
+        was_expanded = path in self._cf_expanded
+        if was_expanded:
+            self._cf_expanded.discard(path)
+            self._cf_anim_prefix = None
+        else:
+            self._cf_expanded.add(path)
+            self._cf_anim_prefix = path
+        self._cf_list_holder.content = self._cf_build_listview()
+        anim_rows = list(self._cf_anim_rows)
+        self._cf_anim_rows = []
+        self._cf_anim_prefix = None
+        # 先以 opacity=0 完成一次首帧布局，再统一切换到 opacity=1
+        # 让 Flet 自带的 animate_opacity 过渡完成「淡入」效果，避免每行
+        # 单独 update() 带来的卡顿。
+        self.page.update()
+        if anim_rows and not was_expanded:
+            for r in anim_rows:
+                try:
+                    r.opacity = 1
+                except Exception:
+                    pass
+            try:
+                self.page.update()
+            except Exception:
+                pass
+
+    def _cf_toggle_dir(self, items: list, value) -> None:
+        # tristate Checkbox 切换：None / False -> 全选；True -> 全不选
+        if value:
+            for it in items:
+                self._cf_selected.add(id(it))
+        else:
+            for it in items:
+                self._cf_selected.discard(id(it))
+        self._cf_list_holder.content = self._cf_build_listview()
+        self._cf_sync_meta()
 
     def _cf_toggle(self, iid: int, value: bool) -> None:
         if value:
             self._cf_selected.add(iid)
         else:
             self._cf_selected.discard(iid)
+        # 刷新文件树以同步目录的部分选中态指示
+        self._cf_list_holder.content = self._cf_build_listview()
         self._cf_sync_meta()
 
     def _cf_toggle_all(self) -> None:
@@ -1205,10 +1517,15 @@ class VaultGuardApp:
                       if id(it) in self._cf_selected)
         sel_upd = sum(1 for it in self._cf_diff.updated_items
                       if id(it) in self._cf_selected)
+        sel_del = sum(1 for it in self._cf_diff.extra_items
+                      if id(it) in self._cf_selected)
+        # 字节数仅统计实际复制项（删除项不占传输）
         sel_bytes = sum(it.size for it in self._cf_items
-                        if id(it) in self._cf_selected)
+                        if id(it) in self._cf_selected
+                        and it.action.value != "extra")
         self._cf_stat_new.value = str(sel_new)
         self._cf_stat_upd.value = str(sel_upd)
+        self._cf_stat_del.value = str(sel_del)
         self._cf_stat_bytes.value = fmt_size(sel_bytes)
         self._cf_confirm_holder.content = self._cf_confirm_btn()
         if update:
@@ -1230,6 +1547,7 @@ class VaultGuardApp:
             new_items=[it for it in diff.new_items if id(it) in sel],
             updated_items=[it for it in diff.updated_items if id(it) in sel],
             skipped_items=diff.skipped_items,
+            extra_items=[it for it in diff.extra_items if id(it) in sel],
         )
         self._confirm_backup(self._cf_src, self._cf_dst, filtered)
 
@@ -1374,9 +1692,14 @@ class VaultGuardApp:
                 border_radius=T.RADIUS_SM)
 
         self.lbl_pct.value = f"{pct * 100:.0f}%"
-        self.lbl_stat.value = (
-            f"{prog.processed_files}/{prog.total_files} 文件 · "
-            f"复制 {prog.copied} · 失败 {prog.failed}")
+        stat_segs = [
+            f"{prog.processed_files}/{prog.total_files} 文件",
+            f"复制 {prog.copied}",
+        ]
+        if prog.deleted:
+            stat_segs.append(f"删除 {prog.deleted}")
+        stat_segs.append(f"失败 {prog.failed}")
+        self.lbl_stat.value = " · ".join(stat_segs)
         self.lbl_speed.value = (
             f"{fmt_size(prog.speed_bps)}/s · 剩余 {fmt_eta(prog.eta_seconds)}")
         self.lbl_file.value = prog.current_file or "..."
@@ -1417,8 +1740,9 @@ class VaultGuardApp:
     def _on_finished(self, prog: CopyProgress) -> None:
         self._set_task_status("done")
         if prog.finished:
-            msg = (f"备份完成：复制 {prog.copied}，失败 {prog.failed}，"
-                   f"共 {prog.total_files} 个文件。")
+            extra = f"，删除 {prog.deleted}" if prog.deleted else ""
+            msg = (f"备份完成：复制 {prog.copied}{extra}，失败 {prog.failed}，"
+                   f"共 {prog.total_files} 个项。")
             self._snack(msg, error=prog.failed > 0)
         self._show_result(prog)
 
@@ -1472,6 +1796,7 @@ class VaultGuardApp:
                    vertical_alignment=ft.CrossAxisAlignment.CENTER),
                 ft.Divider(color=T.BORDER_LIGHT, height=1),
                 kv("复制", f"{prog.copied} 个"),
+                *([kv("删除", f"{prog.deleted} 个")] if prog.deleted else []),
                 kv("失败", f"{prog.failed} 个"),
                 kv("传输", fmt_size(prog.transferred_bytes)),
                 ft.Container(height=T.SP_2),
@@ -1560,11 +1885,17 @@ class VaultGuardApp:
             total = int(t["total_files"] or 0)
             completed = int(t["copied_files"] or 0)
             failed = int(t["failed_files"] or 0)
+            try:
+                deleted = int(t["deleted_files"] or 0)
+            except (KeyError, IndexError):
+                deleted = 0
             if total <= 0:
-                total = completed + failed
-            transferring = max(total - completed - failed, 0)
+                total = completed + failed + deleted
+            transferring = max(total - completed - failed - deleted, 0)
             segments = [
                 (completed, T.SUCCESS),
+                (deleted, T.DANGER_BG_DEEP if hasattr(T, "DANGER_BG_DEEP")
+                 else "#F76560"),
                 (transferring, T.PRIMARY),
                 (failed, T.DANGER),
             ]
@@ -1576,10 +1907,13 @@ class VaultGuardApp:
             if not bars:
                 bars = [ft.Container(bgcolor=T.BORDER_LIGHT, height=6,
                                      expand=True)]
-            tooltip = (
-                f"已完成：{completed} / 传输中：{transferring}"
-                + (f" / 失败：{failed}" if failed else "")
-            )
+            tooltip_parts = [f"已完成：{completed}"]
+            if deleted:
+                tooltip_parts.append(f"删除：{deleted}")
+            tooltip_parts.append(f"传输中：{transferring}")
+            if failed:
+                tooltip_parts.append(f"失败：{failed}")
+            tooltip = " / ".join(tooltip_parts)
             return ft.Container(
                 content=ft.Row(bars, spacing=0, expand=True),
                 height=6,
@@ -1598,16 +1932,24 @@ class VaultGuardApp:
                 fmt_relative_time(finish_ts)
                 if finish_ts else "进行中"
             )
-            detail_btn = ft.IconButton(
-                    icon=ft.Icons.ARTICLE_OUTLINED,
-                    icon_color=T.PRIMARY,
-                    icon_size=18,
-                    width=32,
-                    height=32,
+            detail_btn = ft.Container(
+                    content=_nav_svg_icon(_NAV_SVG_DOCUMENT, T.PRIMARY, 18),
+                    width=32, height=32,
+                    border_radius=T.RADIUS,
+                    alignment=ft.Alignment.CENTER,
                     tooltip="查看详情",
                     on_click=self._safe(
                         "查看任务详情",
                         lambda e, tid=t["id"]: self._show_task_detail(tid)))
+
+            def _detail_hover(e: ft.HoverEvent, c=detail_btn) -> None:
+                try:
+                    c.bgcolor = T.PRIMARY_BG if str(e.data).lower() == "true" else None
+                    c.update()
+                except Exception:
+                    pass
+
+            detail_btn.on_hover = _detail_hover
             return ft.Container(
                 content=ft.Row([
                     cell(_mono_text(f"#{t['id']}", size=T.TEXT_13,
@@ -1685,33 +2027,316 @@ class VaultGuardApp:
         except Exception as ex:  # noqa: BLE001
             self._handle_error("加载任务详情", ex)
             return
-        items = []
-        for lg in logs:
-            ok = lg["action"] != "fail"
-            items.append(ft.Row([
-                ft.Icon(
-                    ft.Icons.CHECK_CIRCLE_OUTLINE_ROUNDED if ok
-                    else ft.Icons.ERROR_OUTLINE_ROUNDED,
-                    size=14,
-                    color=T.SUCCESS if ok else T.DANGER),
-                ft.Text(lg["file_path"], size=T.TEXT_13, expand=True,
-                        color=T.TEXT_PRIMARY, font_family=T.FONT_MONO,
-                        overflow=ft.TextOverflow.ELLIPSIS),
-                _muted_text(lg["reason"], size=T.TEXT_12),
-            ], spacing=T.SP_2))
-        if not items:
-            items = [_muted_text("无文件日志")]
 
-        content = ft.Container(
-            content=ft.ListView(items, spacing=T.SP_1, padding=T.SP_3),
-            width=680, height=440,
+        groups = {"copy": [], "delete": [], "fail": []}
+        for lg in logs:
+            act = lg["action"]
+            if act in groups:
+                groups[act].append(dict(lg))
+
+        group_meta = [
+            ("copy", "复制", T.SUCCESS,
+             ft.Icons.CHECK_CIRCLE_OUTLINE_ROUNDED),
+            ("delete", "删除", T.DANGER,
+             ft.Icons.DELETE_OUTLINE_ROUNDED),
+            ("fail", "失败", T.WARNING,
+             ft.Icons.ERROR_OUTLINE_ROUNDED),
+        ]
+
+        # 每组维护独立的展开目录集合，初始全部收起。
+        expanded_state: dict[str, set[str]] = {k: set() for k, *_ in group_meta}
+
+        def build_tree(items: list[dict]) -> dict:
+            root: dict = {"dirs": {}, "files": [], "path": ""}
+            for it in items:
+                parts = Path(it["file_path"]).parts
+                node = root
+                for p in parts[:-1]:
+                    child = node["dirs"].get(p)
+                    if child is None:
+                        child_path = (node["path"] + "/" + p) if node["path"] else p
+                        child = {"dirs": {}, "files": [], "path": child_path}
+                        node["dirs"][p] = child
+                    node = child
+                node["files"].append(it)
+            return root
+
+        list_holder = ft.Container(content=None, expand=True)
+
+        def render_node(node: dict, depth: int, rows: list,
+                        expanded: set[str], color: str) -> None:
+            for name in sorted(node["dirs"].keys(), key=lambda s: s.lower()):
+                sub = node["dirs"][name]
+                is_open = sub["path"] in expanded
+                file_count = _count_files(sub)
+                rows.append(_make_dir_row(name, sub["path"], depth, is_open,
+                                          file_count, expanded, color))
+                if is_open:
+                    render_node(sub, depth + 1, rows, expanded, color)
+            for it in sorted(node["files"], key=lambda x: x["file_path"]):
+                rows.append(_make_file_row(it, depth, color))
+
+        def _count_files(node: dict) -> int:
+            n = len(node["files"])
+            for sub in node["dirs"].values():
+                n += _count_files(sub)
+            return n
+
+        def _make_dir_row(name: str, path: str, depth: int,
+                          is_open: bool, file_count: int,
+                          expanded: set[str], color: str) -> ft.Container:
+            chevron = ft.Icon(
+                ft.Icons.KEYBOARD_ARROW_DOWN_ROUNDED if is_open
+                else ft.Icons.KEYBOARD_ARROW_RIGHT_ROUNDED,
+                size=16, color=T.TEXT_TERTIARY)
+            folder_icon = ft.Icon(
+                ft.Icons.FOLDER_OPEN_ROUNDED if is_open
+                else ft.Icons.FOLDER_ROUNDED,
+                size=15, color=T.TEXT_TERTIARY)
+            pill = ft.Container(
+                content=ft.Row([
+                    ft.Container(width=18, height=18,
+                                 content=chevron,
+                                 alignment=ft.Alignment.CENTER),
+                    folder_icon,
+                    ft.Text(name, size=T.TEXT_13, expand=True,
+                            color=T.TEXT_TITLE, weight=T.FW_MEDIUM,
+                            overflow=ft.TextOverflow.ELLIPSIS),
+                    ft.Text(f"{file_count} 项", size=T.TEXT_12,
+                            color=T.TEXT_TERTIARY, font_family=T.FONT_MONO),
+                ], spacing=T.SP_2,
+                   vertical_alignment=ft.CrossAxisAlignment.CENTER),
+                height=28,
+                padding=ft.Padding.only(left=T.SP_1, right=T.SP_3),
+                border_radius=T.RADIUS,
+                animate=ft.Animation(T.DUR_FAST, T.EASE),
+                on_click=self._safe(
+                    "展开/收起目录",
+                    lambda e, p=path, ex=expanded:
+                        _toggle_dir(p, ex)),
+                ink=False,
+            )
+
+            def _hover(e: ft.HoverEvent, c=pill) -> None:
+                try:
+                    c.bgcolor = T.FILL_HOVER if e.data == "true" else None
+                    c.update()
+                except Exception:
+                    pass
+
+            pill.on_hover = _hover
+            return ft.Container(
+                content=ft.Row([
+                    ft.Container(width=depth * 18),
+                    ft.Container(content=pill, expand=True),
+                ], spacing=0),
+                padding=ft.Padding.symmetric(vertical=1, horizontal=T.SP_2),
+            )
+
+        def _make_file_row(it: dict, depth: int, color: str) -> ft.Container:
+            name = Path(it["file_path"]).name
+            size_text = fmt_size(it["size"]) if it["size"] else "--"
+            reason_text = (it["reason"] or "").replace("error_", "").replace(
+                "ok_", "")
+            reason_widget = (
+                _muted_text(reason_text, size=T.TEXT_12)
+                if reason_text and reason_text not in ("new", "updated")
+                else _muted_text(size_text, size=T.TEXT_12)
+            )
+            pill = ft.Container(
+                content=ft.Row([
+                    ft.Container(width=18, height=18),
+                    ft.Container(width=6, height=6, border_radius=3,
+                                 bgcolor=color),
+                    ft.Container(
+                        content=_nav_svg_icon(_NAV_SVG_DOCUMENT,
+                                              T.TEXT_TERTIARY, 14),
+                        width=14, height=14,
+                        alignment=ft.Alignment.CENTER),
+                    ft.Text(name, size=T.TEXT_13, expand=True,
+                            color=T.TEXT_PRIMARY,
+                            overflow=ft.TextOverflow.ELLIPSIS,
+                            tooltip=it["file_path"]),
+                    reason_widget,
+                ], spacing=T.SP_2,
+                   vertical_alignment=ft.CrossAxisAlignment.CENTER),
+                height=28,
+                padding=ft.Padding.only(left=T.SP_1, right=T.SP_3),
+                border_radius=T.RADIUS,
+                animate=ft.Animation(T.DUR_FAST, T.EASE),
+                ink=False,
+            )
+
+            def _hover(e: ft.HoverEvent, c=pill) -> None:
+                try:
+                    c.bgcolor = T.FILL_HOVER if e.data == "true" else None
+                    c.update()
+                except Exception:
+                    pass
+
+            pill.on_hover = _hover
+            return ft.Container(
+                content=ft.Row([
+                    ft.Container(width=depth * 18),
+                    ft.Container(content=pill, expand=True),
+                ], spacing=0),
+                padding=ft.Padding.symmetric(vertical=1, horizontal=T.SP_2),
+            )
+
+        # 每组的标题行（点击切换该组所有顶层目录）
+        section_state = {"copy": True, "delete": True, "fail": True}
+
+        def _toggle_section(key: str) -> None:
+            section_state[key] = not section_state[key]
+            _rerender()
+
+        def _toggle_dir(path: str, expanded: set[str]) -> None:
+            if path in expanded:
+                expanded.discard(path)
+            else:
+                expanded.add(path)
+            _rerender()
+
+        def _expand_all(key: str) -> None:
+            tree = build_tree(groups[key])
+            paths: set[str] = set()
+            _collect_dirs(tree, paths)
+            expanded_state[key] = paths
+            section_state[key] = True
+            _rerender()
+
+        def _collapse_all(key: str) -> None:
+            expanded_state[key] = set()
+            _rerender()
+
+        def _collect_dirs(node: dict, out: set[str]) -> None:
+            for sub in node["dirs"].values():
+                if sub["path"]:
+                    out.add(sub["path"])
+                _collect_dirs(sub, out)
+
+        def _section_header(key: str, label: str, color: str, icon) -> ft.Container:
+            count = len(groups[key])
+            opened = section_state[key]
+            chevron = ft.Icon(
+                ft.Icons.KEYBOARD_ARROW_DOWN_ROUNDED if opened
+                else ft.Icons.KEYBOARD_ARROW_RIGHT_ROUNDED,
+                size=16, color=T.TEXT_TERTIARY)
+            actions = []
+            if count > 0:
+                actions = [
+                    ft.Container(
+                        content=ft.Text("展开全部", size=T.TEXT_12,
+                                        color=T.TEXT_TERTIARY),
+                        on_click=self._safe(
+                            f"展开{label}全部目录",
+                            lambda e, k=key: _expand_all(k)),
+                        padding=ft.Padding.symmetric(vertical=2, horizontal=6),
+                        border_radius=T.RADIUS_SM,
+                    ),
+                    ft.Container(
+                        content=ft.Text("全部收起", size=T.TEXT_12,
+                                        color=T.TEXT_TERTIARY),
+                        on_click=self._safe(
+                            f"收起{label}全部目录",
+                            lambda e, k=key: _collapse_all(k)),
+                        padding=ft.Padding.symmetric(vertical=2, horizontal=6),
+                        border_radius=T.RADIUS_SM,
+                    ),
+                ]
+            return ft.Container(
+                content=ft.Row([
+                    ft.Container(content=chevron, width=18,
+                                 alignment=ft.Alignment.CENTER),
+                    ft.Icon(icon, size=14, color=color),
+                    ft.Text(label, size=T.TEXT_13, weight=T.FW_MEDIUM,
+                            color=T.TEXT_TITLE),
+                    ft.Container(
+                        content=ft.Text(str(count), size=T.TEXT_12,
+                                        color=color,
+                                        font_family=T.FONT_MONO,
+                                        weight=T.FW_MEDIUM),
+                        bgcolor=({"copy": T.SUCCESS_BG,
+                                  "delete": T.DANGER_BG,
+                                  "fail": T.WARNING_BG}.get(key, T.FILL)),
+                        padding=ft.Padding.symmetric(vertical=1, horizontal=6),
+                        border_radius=T.RADIUS_SM,
+                    ),
+                    ft.Container(expand=True),
+                    *actions,
+                ], spacing=T.SP_2,
+                   vertical_alignment=ft.CrossAxisAlignment.CENTER),
+                height=32,
+                padding=ft.Padding.symmetric(horizontal=T.SP_3),
+                bgcolor=T.FILL,
+                border=ft.Border(bottom=ft.BorderSide(1, T.BORDER_LIGHT)),
+                on_click=self._safe(
+                    f"切换{label}分组",
+                    lambda e, k=key: _toggle_section(k)),
+                ink=False,
+            )
+
+        def _rerender() -> None:
+            rows: list = []
+            for key, label, color, icon in group_meta:
+                rows.append(_section_header(key, label, color, icon))
+                if not section_state[key]:
+                    continue
+                if not groups[key]:
+                    rows.append(ft.Container(
+                        content=_muted_text(f"无{label}文件",
+                                            size=T.TEXT_12),
+                        padding=ft.Padding.symmetric(
+                            vertical=T.SP_2, horizontal=T.SP_5),
+                    ))
+                    continue
+                tree = build_tree(groups[key])
+                render_node(tree, depth=0, rows=rows,
+                            expanded=expanded_state[key], color=color)
+                rows.append(ft.Container(height=T.SP_1))
+            list_holder.content = ft.ListView(rows, spacing=0,
+                                              padding=0, expand=True)
+            try:
+                self.page.update()
+            except Exception:
+                pass
+
+        _rerender()
+
+        # 头部摘要（复制 / 删除 / 失败 数量）
+        copied_n = len(groups["copy"])
+        deleted_n = len(groups["delete"])
+        failed_n = len(groups["fail"])
+        summary = ft.Row([
+            _detail_summary_chip(ft.Icons.CHECK_CIRCLE_OUTLINE_ROUNDED,
+                                 T.SUCCESS, "复制", copied_n),
+            _detail_summary_chip(ft.Icons.DELETE_OUTLINE_ROUNDED,
+                                 T.DANGER, "删除", deleted_n),
+            _detail_summary_chip(ft.Icons.ERROR_OUTLINE_ROUNDED,
+                                 T.WARNING, "失败", failed_n),
+        ], spacing=T.SP_2,
+           vertical_alignment=ft.CrossAxisAlignment.CENTER)
+
+        body = ft.Container(
+            content=ft.Column([
+                summary,
+                ft.Container(
+                    content=list_holder,
+                    border=ft.Border.all(1, T.BORDER),
+                    border_radius=T.RADIUS_MD,
+                    expand=True,
+                    clip_behavior=ft.ClipBehavior.HARD_EDGE,
+                ),
+            ], spacing=T.SP_3, expand=True),
+            width=720, height=480,
         )
+
         dlg = ft.AlertDialog(
             title=ft.Text(
                 f"任务 #{task_id} 详情"
                 + (f" · {_task_status_label(task['status'])}" if task else ""),
                 weight=T.FW_MEDIUM, size=T.TEXT_16, color=T.TEXT_TITLE),
-            content=content,
+            content=body,
             shape=ft.RoundedRectangleBorder(radius=T.RADIUS_MD),
             actions=[_default_button(
                 "关闭", on_click=self._safe(
@@ -1824,17 +2449,40 @@ class VaultGuardApp:
             width=160, dense=True,
             keyboard_type=ft.KeyboardType.NUMBER)
 
+        from vaultguard.core.config import default_app_data_dir
+        is_default_dir = (
+            Path(self.svc.data_dir).resolve()
+            == default_app_data_dir().expanduser().resolve()
+        )
+        data_dir_path_text = ft.Text(
+            f"数据/日志/配置位置：{self.svc.data_dir}",
+            size=T.TEXT_12,
+            color=T.TEXT_TERTIARY,
+            font_family=T.FONT_MONO,
+            expand=True,
+            overflow=ft.TextOverflow.ELLIPSIS)
+        change_dir_btn = _default_button(
+            "更改位置", icon=ft.Icons.DRIVE_FILE_MOVE_OUTLINED,
+            on_click=self._safe(
+                "更改数据目录", lambda e: self._pick_data_dir()))
+        reset_dir_btn = _default_button(
+            "恢复默认", icon=ft.Icons.RESTORE_ROUNDED,
+            on_click=self._safe(
+                "恢复默认数据目录", lambda e: self._reset_data_dir()),
+            disabled=is_default_dir,
+            tooltip=("当前已是默认位置" if is_default_dir else None))
         data_dir_row = ft.Container(
-            content=ft.Row([
-                ft.Icon(ft.Icons.FOLDER_SHARED_OUTLINED,
-                        color=T.TEXT_TERTIARY, size=17),
-                ft.Text(f"数据/日志/配置位置：{self.svc.data_dir}",
-                        size=T.TEXT_12,
-                        color=T.TEXT_TERTIARY,
-                        font_family=T.FONT_MONO,
-                        expand=True,
-                        overflow=ft.TextOverflow.ELLIPSIS),
-            ], spacing=T.SP_2, vertical_alignment=ft.CrossAxisAlignment.CENTER),
+            content=ft.Column([
+                ft.Row([
+                    ft.Icon(ft.Icons.FOLDER_SHARED_OUTLINED,
+                            color=T.TEXT_TERTIARY, size=17),
+                    data_dir_path_text,
+                ], spacing=T.SP_2,
+                    vertical_alignment=ft.CrossAxisAlignment.CENTER),
+                ft.Row([change_dir_btn, reset_dir_btn],
+                       spacing=T.SP_2,
+                       alignment=ft.MainAxisAlignment.END),
+            ], spacing=T.SP_3, tight=True),
             padding=ft.Padding.symmetric(vertical=9, horizontal=12),
             border_radius=T.RADIUS,
             bgcolor=T.FILL,
@@ -1933,6 +2581,239 @@ class VaultGuardApp:
             ], spacing=0),
             ft.Row([save_btn], alignment=ft.MainAxisAlignment.END),
         ], spacing=T.SP_4, scroll=ft.ScrollMode.AUTO))
+
+    # ========== 数据目录切换 ==========
+    def _pick_data_dir(self) -> None:
+        """弹出原生面板让用户选择新的数据目录，确认后迁移并重启。"""
+        if self._running:
+            self._snack("备份进行中，无法切换数据目录", error=True)
+            return
+
+        def work() -> None:
+            from .dirpicker import pick_directory
+            try:
+                path = pick_directory("选择 VaultGuard 数据目录")
+            except Exception as e:  # noqa: BLE001
+                self._handle_error("选择数据目录", e)
+                return
+            if not path:
+                return
+            self._run_ui(lambda: self._show_switch_dialog(path))
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _reset_data_dir(self) -> None:
+        if self._running:
+            self._snack("备份进行中，无法切换数据目录", error=True)
+            return
+        from vaultguard.core.config import default_app_data_dir
+        target = str(default_app_data_dir())
+        if Path(target).resolve() == Path(self.svc.data_dir).resolve():
+            self._snack("当前已是默认数据目录")
+            return
+        self._show_switch_dialog(target)
+
+    def _show_switch_dialog(self, new_path: str) -> None:
+        """单一对话框：确认 → 迁移中 → 完成并重启，三态原地切换。
+
+        采用单 Dialog 多状态，避免 Flet 对快速 close/open 两个 Dialog
+        时第二个被吞掉的问题（这是用户「点了没反应」的真正成因）。
+        """
+        new_resolved = Path(new_path).expanduser().resolve()
+        cur_resolved = Path(self.svc.data_dir).resolve()
+        if new_resolved == cur_resolved:
+            self._snack("所选目录与当前数据目录相同")
+            return
+
+        # 弹窗主体（用 Container 包住 Column，状态切换时直接替换 Column 内容）
+        body_col = ft.Column(spacing=T.SP_3, tight=True)
+        body = ft.Container(width=520, content=body_col)
+
+        confirm_btn_holder: list = [None]
+        cancel_btn_holder: list = [None]
+
+        dlg = ft.AlertDialog(
+            modal=True,
+            title=ft.Text("切换数据目录",
+                          weight=T.FW_MEDIUM, size=T.TEXT_16,
+                          color=T.TEXT_TITLE),
+            content=body,
+            shape=ft.RoundedRectangleBorder(radius=T.RADIUS_MD),
+            actions=[],
+        )
+
+        def _render_confirm() -> None:
+            body_col.controls = [
+                ft.Text("确认要把数据目录切换到下列位置吗？",
+                        size=T.TEXT_14, color=T.TEXT_PRIMARY),
+                ft.Container(
+                    content=ft.Column([
+                        ft.Text(f"原位置：{cur_resolved}",
+                                size=T.TEXT_12, color=T.TEXT_TERTIARY,
+                                font_family=T.FONT_MONO, selectable=True),
+                        ft.Text(f"新位置：{new_resolved}",
+                                size=T.TEXT_12, color=T.TEXT_PRIMARY,
+                                font_family=T.FONT_MONO, selectable=True),
+                    ], spacing=T.SP_2, tight=True),
+                    padding=ft.Padding.symmetric(vertical=8, horizontal=12),
+                    bgcolor=T.FILL, border_radius=T.RADIUS,
+                ),
+                ft.Text("将把 config.json、vaultguard.db、logs/、error_reports/ "
+                        "整体迁移到新位置，原位置上述内容会被清除。",
+                        size=T.TEXT_12, color=T.TEXT_TERTIARY),
+                ft.Text("迁移完成后会自动重启 VaultGuard 以保证句柄干净。",
+                        size=T.TEXT_12, color=T.WARNING),
+            ]
+            cancel_btn = _default_button(
+                "取消",
+                on_click=self._safe(
+                    "取消切换数据目录",
+                    lambda e: self._close_overlay(dlg)))
+            confirm_btn = _primary_button(
+                "迁移并重启", icon=ft.Icons.DRIVE_FILE_MOVE_OUTLINED,
+                on_click=self._safe(
+                    "开始迁移",
+                    lambda e: _start_migrate()))
+            cancel_btn_holder[0] = cancel_btn
+            confirm_btn_holder[0] = confirm_btn
+            dlg.actions = [cancel_btn, confirm_btn]
+            try:
+                self.page.update()
+            except Exception:
+                pass
+
+        def _render_progress() -> None:
+            body_col.controls = [
+                ft.Row([
+                    ft.ProgressRing(width=18, height=18, stroke_width=2,
+                                    color=T.PRIMARY),
+                    ft.Text("正在迁移数据，请勿关闭窗口…",
+                            size=T.TEXT_14, color=T.TEXT_PRIMARY),
+                ], spacing=T.SP_3,
+                    vertical_alignment=ft.CrossAxisAlignment.CENTER),
+                ft.Container(
+                    content=ft.Text(f"目标位置：{new_resolved}",
+                                    size=T.TEXT_12, color=T.TEXT_TERTIARY,
+                                    font_family=T.FONT_MONO, selectable=True),
+                    padding=ft.Padding.symmetric(vertical=8, horizontal=12),
+                    bgcolor=T.FILL, border_radius=T.RADIUS,
+                ),
+            ]
+            dlg.actions = []
+            try:
+                self.page.update()
+            except Exception:
+                pass
+
+        def _render_done() -> None:
+            body_col.controls = [
+                ft.Row([
+                    ft.Icon(ft.Icons.CHECK_CIRCLE_ROUNDED,
+                            color=T.SUCCESS, size=20),
+                    ft.Text("迁移完成，VaultGuard 即将重启以使新位置生效。",
+                            size=T.TEXT_14, color=T.TEXT_PRIMARY),
+                ], spacing=T.SP_3,
+                    vertical_alignment=ft.CrossAxisAlignment.CENTER),
+                ft.Container(
+                    content=ft.Text(f"新位置：{new_resolved}",
+                                    size=T.TEXT_12, color=T.TEXT_PRIMARY,
+                                    font_family=T.FONT_MONO, selectable=True),
+                    padding=ft.Padding.symmetric(vertical=8, horizontal=12),
+                    bgcolor=T.FILL, border_radius=T.RADIUS,
+                ),
+            ]
+            dlg.actions = [_primary_button(
+                "立即重启", icon=ft.Icons.RESTART_ALT_ROUNDED,
+                on_click=self._safe("立即重启",
+                                    lambda e: self._restart_app()))]
+            try:
+                self.page.update()
+            except Exception:
+                pass
+
+        def _render_failed(msg: str) -> None:
+            body_col.controls = [
+                ft.Row([
+                    ft.Icon(ft.Icons.ERROR_ROUNDED, color=T.DANGER, size=20),
+                    ft.Text("迁移失败，原数据保持不变。",
+                            size=T.TEXT_14, color=T.TEXT_PRIMARY),
+                ], spacing=T.SP_3,
+                    vertical_alignment=ft.CrossAxisAlignment.CENTER),
+                ft.Text(msg, size=T.TEXT_12, color=T.DANGER,
+                        selectable=True),
+            ]
+            dlg.actions = [_default_button(
+                "关闭",
+                on_click=self._safe("关闭迁移失败弹窗",
+                                    lambda e: self._close_overlay(dlg)))]
+            try:
+                self.page.update()
+            except Exception:
+                pass
+
+        def _start_migrate() -> None:
+            _render_progress()
+            threading.Thread(target=_do_migrate, daemon=True).start()
+
+        def _do_migrate() -> None:
+            from vaultguard.core.config import set_custom_data_dir
+            try:
+                try:
+                    self.svc.close()
+                except Exception:
+                    pass
+                set_custom_data_dir(Path(new_resolved), migrate=True)
+            except Exception as ex:  # noqa: BLE001
+                self._record_error("迁移数据目录", ex)
+                self._run_ui(lambda: _render_failed(
+                    f"{type(ex).__name__}: {ex}"))
+                return
+            self._run_ui(_render_done)
+
+        _render_confirm()
+        self._open_overlay(dlg)
+
+    def _restart_app(self) -> None:
+        """关闭当前窗口并拉起新的 VaultGuard 进程。
+
+        采用 detach shell（`nohup sh -c '...' &`）而非直接 Popen，
+        确保即使本进程立刻 _exit，子命令也由 launchd 接管不会被中断。
+        """
+        import os
+        import shlex
+        import subprocess
+        import sys
+
+        try:
+            if getattr(sys, "frozen", False) and sys.platform == "darwin":
+                exe = Path(sys.executable).resolve()
+                app_bundle = exe.parents[2] if len(exe.parents) >= 3 else None
+                if app_bundle and app_bundle.suffix == ".app":
+                    cmd = (f"sleep 0.5 && open -n "
+                           f"{shlex.quote(str(app_bundle))}")
+                else:
+                    cmd = f"sleep 0.5 && {shlex.quote(str(exe))}"
+                subprocess.Popen(["/bin/sh", "-c", cmd],
+                                 stdout=subprocess.DEVNULL,
+                                 stderr=subprocess.DEVNULL,
+                                 stdin=subprocess.DEVNULL,
+                                 start_new_session=True)
+            elif getattr(sys, "frozen", False):
+                subprocess.Popen([sys.executable],
+                                 start_new_session=True)
+            else:
+                main_py = Path(__file__).resolve().parents[2] / "main.py"
+                subprocess.Popen([sys.executable, str(main_py)],
+                                 start_new_session=True)
+        except Exception as ex:  # noqa: BLE001
+            self._handle_error("拉起新进程", ex)
+            return
+
+        try:
+            self.page.window.close()
+        except Exception:
+            pass
+        os._exit(0)
 
     def _save_settings(self) -> None:
         s = self.svc.settings
