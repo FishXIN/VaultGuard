@@ -30,3 +30,33 @@ def fmt_time(ts: int | None) -> str:
         return "--"
     import time
     return time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(ts))
+
+
+def fmt_relative_time(ts: int | None, now: int | None = None) -> str:
+    """将时间戳格式化为面向用户的相对时间。"""
+    if not ts:
+        return "--"
+    import time
+    now = int(time.time()) if now is None else int(now)
+    seconds = max(0, now - int(ts))
+    if seconds < 5:
+        return "刚刚"
+    if seconds < 60:
+        return f"{seconds}秒之前"
+    minutes = seconds // 60
+    if minutes < 60:
+        return f"{minutes}分钟之前"
+    hours = minutes // 60
+    if hours < 24:
+        return f"{hours}小时之前"
+    days = hours // 24
+    if days < 7:
+        return f"{days}天之前"
+    weeks = days // 7
+    if weeks < 4:
+        return f"{weeks}周之前"
+    months = days // 30
+    if months < 12:
+        return f"{max(months, 1)}月之前"
+    years = days // 365
+    return f"{max(years, 1)}年之前"

@@ -1,4 +1,4 @@
-"""macOS 原生目录选择器。
+"""跨平台原生目录选择器。
 
 关键点：macOS 10.15+ 的打开/保存面板由独立的系统服务进程绘制，其界面语言
 （New Folder / Cancel / 侧栏等 chrome）取决于「发起请求的那个进程的 main
@@ -13,11 +13,13 @@ bundle 声明支持哪些本地化」，而不是 AppleLanguages 环境变量。
 甚至闪退。为此把面板放进一个 VaultGuard 自身的子进程运行：该子进程的 main
 bundle 即 VaultGuard.app（声明了中文本地化），拥有干净的主线程与自己的
 NSApplication；并设为 accessory 激活策略，不在 Dock 多出图标、不开主窗口，
-只弹出原生面板本身。弹窗结束后把选中路径写到 stdout 再退出。
+只弹出原生面板本身。Windows/Linux 则在独立子进程中使用 tkinter 的系统目录
+选择对话框，避免阻塞主 UI 事件线程。弹窗结束后把选中路径写到 stdout 再退出。
 """
 from __future__ import annotations
 
 import os
+import platform
 import subprocess
 import sys
 from pathlib import Path
@@ -27,33 +29,46 @@ _MARKER = "VGPATH:"
 
 
 def run_picker_process() -> None:
-    """子进程入口：弹出 NSOpenPanel，把选中路径写到 stdout 后退出。
+    """子进程入口：弹出平台原生目录选择器，把选中路径写到 stdout 后退出。
 
     该函数不导入桌面 UI 运行时，确保子进程启动尽量快、且不创建任何主窗口。
     """
     title = os.environ.get("VAULTGUARD_DIR_PICKER_TITLE", "选择目录")
     try:
-        from AppKit import NSApplication, NSOpenPanel
+        if platform.system() == "Darwin":
+            from AppKit import NSApplication, NSOpenPanel
 
-        app = NSApplication.sharedApplication()
-        # Accessory 策略：能正常获得焦点并展示模态面板，但不在 Dock 中显示
-        # 额外图标（Regular=0 会让选择器子进程在 Dock 冒出第二个图标）。
-        app.setActivationPolicy_(1)
+            app = NSApplication.sharedApplication()
+            # Accessory 策略：能正常获得焦点并展示模态面板，但不在 Dock 中显示
+            # 额外图标（Regular=0 会让选择器子进程在 Dock 冒出第二个图标）。
+            app.setActivationPolicy_(1)
 
-        panel = NSOpenPanel.openPanel()
-        panel.setTitle_(title)
-        panel.setMessage_(title)
-        panel.setCanChooseFiles_(False)
-        panel.setCanChooseDirectories_(True)
-        panel.setAllowsMultipleSelection_(False)
-        panel.setCanCreateDirectories_(True)
+            panel = NSOpenPanel.openPanel()
+            panel.setTitle_(title)
+            panel.setMessage_(title)
+            panel.setCanChooseFiles_(False)
+            panel.setCanChooseDirectories_(True)
+            panel.setAllowsMultipleSelection_(False)
+            panel.setCanCreateDirectories_(True)
 
-        app.activateIgnoringOtherApps_(True)
-        result = panel.runModal()
-        if result == 1:
-            urls = panel.URLs()
-            if urls and len(urls) > 0:
-                sys.stdout.write(_MARKER + str(urls[0].path()) + "\n")
+            app.activateIgnoringOtherApps_(True)
+            result = panel.runModal()
+            if result == 1:
+                urls = panel.URLs()
+                if urls and len(urls) > 0:
+                    sys.stdout.write(_MARKER + str(urls[0].path()) + "\n")
+                    sys.stdout.flush()
+        else:
+            import tkinter as tk
+            from tkinter import filedialog
+
+            root = tk.Tk()
+            root.withdraw()
+            root.attributes("-topmost", True)
+            path = filedialog.askdirectory(title=title, mustexist=False)
+            root.destroy()
+            if path:
+                sys.stdout.write(_MARKER + path + "\n")
                 sys.stdout.flush()
     except Exception as e:  # noqa: BLE001
         sys.stderr.write(str(e))
@@ -64,7 +79,7 @@ def pick_directory(title: str) -> Optional[str]:
     """主进程调用：spawn VaultGuard 自身的子进程弹出原生面板，返回路径或 None。
 
     子进程的 main bundle 即 VaultGuard.app（Info.plist 已声明 zh-Hans），故
-    系统面板会跟随系统语言显示中文。
+    macOS 系统面板会跟随系统语言显示中文；其他平台使用其系统目录选择框。
     """
     env = dict(os.environ)
     env["VAULTGUARD_DIR_PICKER"] = "1"

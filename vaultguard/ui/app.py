@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import threading
 import time
+import unicodedata
 import webbrowser
 from pathlib import Path
 from typing import Callable, Optional
@@ -22,7 +23,7 @@ from vaultguard.core.models import CompareProgress, CopyProgress, DiffResult
 from vaultguard.core.service import BackupService
 from . import tokens as T
 from .error_reporter import ErrorReporter
-from .helpers import fmt_eta, fmt_size, fmt_time
+from .helpers import fmt_eta, fmt_relative_time, fmt_size
 from .runtime import VIEW_PATH_ENV, ft
 
 
@@ -100,17 +101,35 @@ def _badge(label: str, kind: str = "running") -> ft.Container:
         "running": (T.RUNNING, T.RUNNING_BG),
     }
     fg, bg = palette.get(kind, palette["running"])
+    text_units = sum(
+        2 if unicodedata.east_asian_width(ch) in ("F", "W") else 1
+        for ch in label
+    )
+    badge_width = max(46, min(116, text_units * 6 + 22))
     return ft.Container(
         content=ft.Row([
             ft.Container(width=6, height=6, bgcolor=fg, border_radius=3),
             ft.Text(label, size=T.TEXT_12, weight=T.FW_MEDIUM, color=fg),
         ], spacing=T.SP_1, tight=True),
+        width=badge_width,
         bgcolor=bg,
         border_radius=T.RADIUS_SM,
-        padding=ft.Padding.symmetric(vertical=0, horizontal=T.SP_2),
+        padding=ft.Padding.symmetric(vertical=0, horizontal=T.SP_1),
         height=22,
         alignment=ft.Alignment.CENTER,
     )
+
+
+def _task_status_label(status: str) -> str:
+    """将任务内部状态转换为界面展示文案。"""
+    return {
+        "pending": "等待中",
+        "running": "传输中",
+        "paused": "已暂停",
+        "completed": "已完成",
+        "failed": "出错了",
+        "cancelled": "已取消",
+    }.get(status, status)
 
 
 def _primary_button(text: str, icon=None, on_click=None,
@@ -287,6 +306,7 @@ class VaultGuardApp:
         self._running = False
         self._nav_index = 0
         self._nav_items: list[ft.Container] = []
+        self._task_status_slot: Optional[ft.Container] = None
         self._task_stage = "home"
         self._task_content = None
         self._compare_started_at = 0.0
@@ -295,6 +315,7 @@ class VaultGuardApp:
         self._compare_refreshing = False
         self._latest_copy_prog: Optional[CopyProgress] = None
         self._copy_refreshing = False
+        self._history_refreshing = False
         self._last_log_file = ""
 
         self._setup_page()
@@ -316,6 +337,9 @@ class VaultGuardApp:
         p.window.height = 760
         p.window.min_width = 960
         p.window.min_height = 640
+        # 隐藏原生标题栏，让侧边栏直接延伸到窗口顶部，交通灯按钮悬浮其上
+        # （macOS 风格的无缝侧栏，参考飞书）。
+        p.window.title_bar_hidden = True
         p.padding = 0
 
     def _build_layout(self) -> None:
@@ -331,16 +355,19 @@ class VaultGuardApp:
 
         sidebar = ft.Container(
             content=ft.Column(
-                [ft.Container(height=T.SP_2),
+                [ft.WindowDragArea(
+                    ft.Container(height=T.HEADER_H)),
                  *self._nav_items],
                 spacing=T.SP_1,
             ),
             width=T.SIDEBAR_W,
             bgcolor=T.BG,
+            # 右边框贯穿全高（含顶栏），让中间分割线一直延伸到窗口顶部
             border=ft.Border(right=ft.BorderSide(1, T.BORDER)),
         )
 
         self.content = ft.Container(
+            content=None,
             expand=True,
             padding=T.SP_6,
             bgcolor=T.BG,
@@ -348,7 +375,15 @@ class VaultGuardApp:
 
         self.page.add(
             ft.Row(
-                [sidebar, self.content],
+                [sidebar,
+                 # 右侧工作区顶部留出等高拖拽条，与侧栏顶栏对齐
+                 ft.Column(
+                     [ft.WindowDragArea(
+                         ft.Container(height=T.HEADER_H, bgcolor=T.BG)),
+                      self.content],
+                     expand=True,
+                     spacing=0,
+                 )],
                 expand=True,
                 spacing=0,
             )
@@ -357,13 +392,22 @@ class VaultGuardApp:
     def _make_nav_item(self, idx: int, icon, label: str) -> ft.Container:
         active = idx == self._nav_index
         fg = T.PRIMARY if active else T.TEXT_PRIMARY
+        row_controls = [
+            _nav_svg_icon(icon, fg, 18),
+            ft.Text(label, size=T.TEXT_14, weight=T.FW_MEDIUM, color=fg),
+        ]
+        # 「任务」项右侧预留状态槽：备份进行中显示转圈 icon，结束显示红色小标注。
+        if idx == 0:
+            self._task_status_slot = ft.Container(
+                width=14, height=14, alignment=ft.Alignment.CENTER,
+                content=None,
+            )
+            row_controls.append(ft.Container(expand=True))
+            row_controls.append(self._task_status_slot)
         item = ft.Container(
-            content=ft.Row([
-                _nav_svg_icon(icon, fg, 18),
-                ft.Text(label, size=T.TEXT_14, weight=T.FW_MEDIUM, color=fg),
-            ], spacing=T.SP_3, tight=True),
+            content=ft.Row(row_controls, spacing=T.SP_3, tight=(idx != 0)),
             height=40,
-            padding=ft.Padding.only(left=T.SP_5 - 2, right=T.SP_4),
+            padding=ft.Padding.only(left=T.SP_4 - 2, right=T.SP_3),
             margin=ft.Padding.symmetric(vertical=0, horizontal=T.SP_2),
             bgcolor=T.PRIMARY_BG if active else None,
             border=ft.Border(left=ft.BorderSide(
@@ -401,8 +445,31 @@ class VaultGuardApp:
                 2, T.PRIMARY if active else "#00000000"))
         self.page.update()
 
+    def _set_task_status(self, status: Optional[str]) -> None:
+        """更新「任务」导航项右侧的状态指示器。
+        status: "running" 备份进行中（转圈）、"done" 备份结束（红色小标注）、
+        None 清除。
+        """
+        slot = self._task_status_slot
+        if slot is None:
+            return
+        if status == "running":
+            slot.content = ft.ProgressRing(
+                width=14, height=14, stroke_width=2, color=T.PRIMARY)
+        elif status == "done":
+            slot.content = ft.Container(
+                width=8, height=8, border_radius=4, bgcolor=T.DANGER)
+        else:
+            slot.content = None
+        try:
+            slot.update()
+        except Exception:
+            pass
+
     def _on_nav_click(self, idx: int) -> None:
         self._nav_index = idx
+        if idx != 1:
+            self._history_refreshing = False
         self._refresh_nav()
         if idx == 0:
             self._show_task()
@@ -429,6 +496,7 @@ class VaultGuardApp:
     def _reset_task_home(self) -> None:
         self.current_diff = None
         self._task_stage = "home"
+        self._set_task_status(None)
         self._show_home()
 
     def _run_ui(self, fn: Callable[[], None]) -> None:
@@ -600,7 +668,7 @@ class VaultGuardApp:
             lambda e: setattr(self, "target_path", e.control.value))
 
         self._set_task_content(ft.Column([
-            self._page_header("本地硬盘增量备份"),
+            self._page_header("你好，今天要备份点什么～"),
             ft.Container(height=1, bgcolor=T.BORDER_LIGHT),
             _card(
                 _section_title("选择目录"),
@@ -1223,6 +1291,7 @@ class VaultGuardApp:
     def _start_execution(self, src: str, dst: str, resume: bool) -> None:
         self._show_progress_view()
         self._running = True
+        self._set_task_status("running")
         self.executor = self.svc.make_executor()
         task_id = self.current_task_id
 
@@ -1320,6 +1389,7 @@ class VaultGuardApp:
             self._snack("已请求中断，断点已保存，可稍后从断点继续")
 
     def _on_finished(self, prog: CopyProgress) -> None:
+        self._set_task_status("done")
         if prog.finished:
             msg = (f"备份完成：复制 {prog.copied}，失败 {prog.failed}，"
                    f"共 {prog.total_files} 个文件。")
@@ -1404,7 +1474,7 @@ class VaultGuardApp:
         self._show_history()
 
     # ========== 历史记录页 ==========
-    def _show_history(self) -> None:
+    def _show_history(self, auto_refresh: bool = True) -> None:
         try:
             tasks = self.svc.list_tasks()
         except Exception as ex:  # noqa: BLE001
@@ -1436,6 +1506,7 @@ class VaultGuardApp:
             "running": "running",
             "cancelled": "warning",
         }
+        status_col_w = 108
 
         def cell(control, *, width: Optional[int] = None,
                  expand: Optional[int] = None,
@@ -1459,9 +1530,48 @@ class VaultGuardApp:
                 align=align,
             )
 
+        def history_status_bar(t: dict) -> ft.Container:
+            total = int(t["total_files"] or 0)
+            completed = int(t["copied_files"] or 0)
+            failed = int(t["failed_files"] or 0)
+            if total <= 0:
+                total = completed + failed
+            transferring = max(total - completed - failed, 0)
+            segments = [
+                (completed, T.SUCCESS),
+                (transferring, T.PRIMARY),
+                (failed, T.DANGER),
+            ]
+            bars = [
+                ft.Container(bgcolor=color, height=6, expand=count)
+                for count, color in segments
+                if count > 0
+            ]
+            if not bars:
+                bars = [ft.Container(bgcolor=T.BORDER_LIGHT, height=6,
+                                     expand=True)]
+            tooltip = (
+                f"已完成：{completed} / 传输中：{transferring}"
+                + (f" / 失败：{failed}" if failed else "")
+            )
+            return ft.Container(
+                content=ft.Row(bars, spacing=0, expand=True),
+                height=6,
+                bgcolor=T.BORDER_LIGHT,
+                border_radius=T.RADIUS_SM,
+                clip_behavior=ft.ClipBehavior.HARD_EDGE,
+                tooltip=tooltip,
+                expand=True,
+            )
+
         def table_row(t: dict, *, last: bool = False) -> ft.Container:
             kind = kind_map.get(t["status"], "running")
-            failed_color = T.DANGER if t["failed_files"] else T.TEXT_TERTIARY
+            status_label = _task_status_label(t["status"])
+            finish_ts = t["end_time"] or None
+            finish_text = (
+                fmt_relative_time(finish_ts)
+                if finish_ts else "进行中"
+            )
             detail_btn = ft.IconButton(
                     icon=ft.Icons.ARTICLE_OUTLINED,
                     icon_color=T.PRIMARY,
@@ -1476,15 +1586,13 @@ class VaultGuardApp:
                 content=ft.Row([
                     cell(_mono_text(f"#{t['id']}", size=T.TEXT_13,
                                     color=T.TEXT_TITLE), width=70),
-                    cell(_badge(t["status"], kind), expand=2),
-                    cell(_mono_text(str(t["copied_files"]), color=T.SUCCESS),
-                         width=82),
-                    cell(_mono_text(str(t["failed_files"]), color=failed_color),
-                         width=82),
-                    cell(ft.Text(fmt_time(t["start_time"]), size=T.TEXT_13,
+                    cell(_badge(status_label, kind), width=status_col_w,
+                         align=ft.Alignment.CENTER),
+                    cell(history_status_bar(t), expand=3),
+                    cell(ft.Text(finish_text, size=T.TEXT_13,
                                  color=T.TEXT_PRIMARY,
                                  overflow=ft.TextOverflow.ELLIPSIS),
-                         expand=3),
+                         expand=2),
                     cell(detail_btn, width=70, align=ft.Alignment.CENTER),
                 ], spacing=0, expand=True,
                    vertical_alignment=ft.CrossAxisAlignment.CENTER),
@@ -1496,10 +1604,9 @@ class VaultGuardApp:
         table_header = ft.Container(
             content=ft.Row([
                 head("ID", width=70),
-                head("状态", expand=2),
-                head("复制", width=82),
-                head("失败", width=82),
-                head("开始时间", expand=3),
+                head("任务", width=status_col_w),
+                head("状态", expand=3),
+                head("结束时间", expand=2),
                 head("详情", width=70, align=ft.Alignment.CENTER),
             ], spacing=0, expand=True,
                vertical_alignment=ft.CrossAxisAlignment.CENTER),
@@ -1528,6 +1635,22 @@ class VaultGuardApp:
             ft.Container(height=1, bgcolor=T.BORDER_LIGHT),
             history_panel,
         ], spacing=T.SP_5, expand=True))
+
+        has_active_task = any(
+            t["status"] in ("pending", "running", "paused") for t in tasks)
+        if not has_active_task:
+            self._history_refreshing = False
+        elif auto_refresh and not self._history_refreshing:
+            self._history_refreshing = True
+
+            async def refresh_history():
+                while self._history_refreshing and self._nav_index == 1:
+                    await asyncio.sleep(1)
+                    if self._nav_index != 1:
+                        break
+                    self._show_history(auto_refresh=False)
+
+            self._start_refresher(refresh_history, "历史记录刷新")
 
     def _show_task_detail(self, task_id: int) -> None:
         try:
@@ -1560,7 +1683,7 @@ class VaultGuardApp:
         dlg = ft.AlertDialog(
             title=ft.Text(
                 f"任务 #{task_id} 详情"
-                + (f" · {task['status']}" if task else ""),
+                + (f" · {_task_status_label(task['status'])}" if task else ""),
                 weight=T.FW_MEDIUM, size=T.TEXT_16, color=T.TEXT_TITLE),
             content=content,
             shape=ft.RoundedRectangleBorder(radius=T.RADIUS_MD),
@@ -1574,9 +1697,9 @@ class VaultGuardApp:
     def _show_settings(self) -> None:
         s = self.svc.settings
 
-        def _tf(label, value, **kw) -> ft.TextField:
+        def _tf(value, **kw) -> ft.TextField:
             return ft.TextField(
-                label=label, value=value,
+                value=value,
                 border_radius=T.RADIUS,
                 border_color=T.BORDER,
                 focused_border_color=T.PRIMARY,
@@ -1586,37 +1709,111 @@ class VaultGuardApp:
                 **kw,
             )
 
+        def _setting_title(title: str, desc: str) -> ft.Column:
+            return ft.Column([
+                ft.Text(title, size=T.TEXT_14, weight=T.FW_MEDIUM,
+                        color=T.TEXT_TITLE, font_family=T.FONT_SANS),
+                _muted_text(desc, size=T.TEXT_12),
+            ], spacing=2, tight=True, expand=True)
+
+        def _divider() -> ft.Container:
+            return ft.Container(height=1, bgcolor=T.BORDER_LIGHT)
+
+        def _section_label(title: str, desc: str, icon) -> ft.Container:
+            return ft.Container(
+                content=ft.Row([
+                    ft.Icon(icon, color=T.PRIMARY, size=16),
+                    ft.Column([
+                        ft.Text(title, size=T.TEXT_13, weight=T.FW_MEDIUM,
+                                color=T.TEXT_TITLE, font_family=T.FONT_SANS),
+                        _muted_text(desc, size=T.TEXT_12),
+                    ], spacing=2, tight=True, expand=True),
+                ], spacing=T.SP_2,
+                    vertical_alignment=ft.CrossAxisAlignment.CENTER),
+                padding=ft.Padding.symmetric(vertical=12, horizontal=16),
+                bgcolor=T.FILL,
+            )
+
+        def _setting_row(title: str, desc: str, control,
+                         danger: bool = False) -> ft.Container:
+            return ft.Container(
+                content=ft.Row([
+                    _setting_title(title, desc),
+                    control,
+                ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                    spacing=T.SP_4),
+                padding=ft.Padding.symmetric(vertical=14, horizontal=16),
+                bgcolor=T.DANGER_BG if danger else T.BG,
+            )
+
+        def _field_row(title: str, desc: str, field) -> ft.Container:
+            return ft.Container(
+                content=ft.Row([
+                    _setting_title(title, desc),
+                    field,
+                ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                    spacing=T.SP_4),
+                padding=ft.Padding.symmetric(vertical=14, horizontal=16),
+                bgcolor=T.BG,
+            )
+
+        def _textarea_row(title: str, desc: str, field) -> ft.Container:
+            return ft.Container(
+                content=ft.Column([
+                    _setting_title(title, desc),
+                    field,
+                ], spacing=T.SP_3, tight=True),
+                padding=ft.Padding.symmetric(vertical=14, horizontal=16),
+                bgcolor=T.BG,
+            )
+
+        def _settings_list(*controls) -> ft.Container:
+            return ft.Container(
+                width=736,
+                bgcolor=T.BG,
+                border=ft.Border.all(1, T.BORDER),
+                border_radius=T.RADIUS_MD,
+                clip_behavior=ft.ClipBehavior.HARD_EDGE,
+                content=ft.Column(list(controls), spacing=0, tight=True),
+            )
+
         self.f_tolerance = _tf(
-            "mtime 容差（秒）", str(s.mtime_tolerance),
-            width=220, dense=True,
+            str(s.mtime_tolerance),
+            width=160, dense=True,
             keyboard_type=ft.KeyboardType.NUMBER)
         self.f_compare_size = ft.Switch(
-            label="检测文件容量变化", value=s.compare_size,
-            active_color=T.PRIMARY)
+            value=s.compare_size, active_color=T.PRIMARY)
         self.f_verify_hash = ft.Switch(
-            label="Hash 校验",
             value=s.verify_hash, active_color=T.PRIMARY)
         self.f_delete_sync = ft.Switch(
-            label="删除同步",
             value=s.delete_sync, active_color=T.DANGER)
         self.f_use_recycle = ft.Switch(
-            label="移入回收区",
             value=s.use_recycle, active_color=T.PRIMARY)
         self.f_exclude = _tf(
-            "排除规则（每行一个，支持通配符）",
             "\n".join(s.exclude_patterns),
             multiline=True, min_lines=3, max_lines=8)
         self.f_retry = _tf(
-            "单文件失败重试次数", str(s.retry_times),
-            width=220, dense=True,
+            str(s.retry_times),
+            width=160, dense=True,
             keyboard_type=ft.KeyboardType.NUMBER)
 
-        data_dir_row = ft.Row([
-            ft.Icon(ft.Icons.FOLDER_SHARED_OUTLINED,
-                    color=T.TEXT_TERTIARY, size=18),
-            _muted_text(f"数据/日志/配置位置：{self.svc.data_dir}",
-                        size=T.TEXT_12),
-        ], spacing=T.SP_2)
+        data_dir_row = ft.Container(
+            content=ft.Row([
+                ft.Icon(ft.Icons.FOLDER_SHARED_OUTLINED,
+                        color=T.TEXT_TERTIARY, size=17),
+                ft.Text(f"数据/日志/配置位置：{self.svc.data_dir}",
+                        size=T.TEXT_12,
+                        color=T.TEXT_TERTIARY,
+                        font_family=T.FONT_MONO,
+                        expand=True,
+                        overflow=ft.TextOverflow.ELLIPSIS),
+            ], spacing=T.SP_2, vertical_alignment=ft.CrossAxisAlignment.CENTER),
+            padding=ft.Padding.symmetric(vertical=9, horizontal=12),
+            border_radius=T.RADIUS,
+            bgcolor=T.FILL,
+        )
 
         save_btn = _primary_button(
             "保存设置", icon=ft.Icons.SAVE_OUTLINED,
@@ -1629,46 +1826,87 @@ class VaultGuardApp:
             disabled=not has_error_report,
             tooltip=(None if has_error_report else "最近没有报错需要提交"))
 
+        settings_list = _settings_list(
+            _section_label(
+                "对比策略",
+                "控制文件差异判断的精度与范围。",
+                ft.Icons.TUNE_ROUNDED),
+            _field_row(
+                "mtime 容差",
+                "允许源目录与目标目录的文件时间存在轻微误差，单位为秒。",
+                self.f_tolerance),
+            _divider(),
+            _setting_row(
+                "检测文件容量变化",
+                "容量变化会被视为需要同步，适合增量备份默认开启。",
+                self.f_compare_size),
+            _section_label(
+                "文件安全",
+                "控制复制校验、失败重试与删除同步行为。",
+                ft.Icons.VERIFIED_USER_OUTLINED),
+            _setting_row(
+                "Hash 校验",
+                "复制完成后校验文件内容，速度更慢但可靠性更高。",
+                self.f_verify_hash),
+            _divider(),
+            _field_row(
+                "失败重试次数",
+                "单个文件复制失败后的自动重试次数。",
+                self.f_retry),
+            _section_label(
+                "删除策略",
+                "影响目标目录中多余文件的处理方式。",
+                ft.Icons.WARNING_AMBER_ROUNDED),
+            _setting_row(
+                "删除同步",
+                "目标目录中多余文件会随源目录删除，开启前请确认备份策略。",
+                self.f_delete_sync,
+                danger=True),
+            _divider(),
+            _setting_row(
+                "移入回收区",
+                "删除同步时优先移入系统回收区，降低误删风险。",
+                self.f_use_recycle),
+            _section_label(
+                "排除规则",
+                "每行一条规则，支持通配符。",
+                ft.Icons.FILTER_ALT_OUTLINED),
+            _textarea_row(
+                "忽略文件与目录",
+                "命中的文件或目录不会参与对比与备份。",
+                self.f_exclude),
+            _section_label(
+                "错误反馈",
+                "本地记录异常上下文，便于快速定位问题。",
+                ft.Icons.BUG_REPORT_OUTLINED),
+            ft.Container(
+                content=data_dir_row,
+                padding=ft.Padding.only(left=16, right=16, top=14),
+                bgcolor=T.BG,
+            ),
+            ft.Container(
+                content=ft.Column([
+                    ft.Text(f"异常报告目录：{self.error_reporter.report_dir}",
+                            size=T.TEXT_12,
+                            color=T.TEXT_TERTIARY,
+                            font_family=T.FONT_MONO,
+                            overflow=ft.TextOverflow.ELLIPSIS),
+                    ft.Row([report_btn], alignment=ft.MainAxisAlignment.END),
+                ], spacing=T.SP_3, tight=True),
+                padding=ft.Padding.symmetric(vertical=14, horizontal=16),
+                bgcolor=T.BG,
+            ),
+        )
+
         self._set_content(ft.Column([
             self._page_header("设置"),
             ft.Container(height=1, bgcolor=T.BORDER_LIGHT),
             ft.Container(
                 content=ft.Column([
-                    _card(
-                        _section_title("对比策略"),
-                        self.f_tolerance,
-                        self.f_compare_size,
-                    ),
-                    _card(
-                        _section_title("文件安全"),
-                        self.f_verify_hash,
-                        self.f_retry,
-                        ft.Divider(color=T.BORDER_LIGHT, height=1),
-                        ft.Row([
-                            ft.Icon(ft.Icons.WARNING_AMBER_ROUNDED,
-                                    color=T.DANGER, size=16),
-                            ft.Text("删除策略",
-                                    size=T.TEXT_14, weight=T.FW_MEDIUM,
-                                    color=T.DANGER),
-                        ], spacing=T.SP_2),
-                        self.f_delete_sync,
-                        self.f_use_recycle,
-                    ),
-                    _card(
-                        _section_title("排除规则"),
-                        self.f_exclude,
-                    ),
-                    _card(
-                        _section_title("错误反馈"),
-                        data_dir_row,
-                        _muted_text(
-                            f"异常会自动记录到 {self.error_reporter.report_dir}",
-                            size=T.TEXT_12),
-                        ft.Row([report_btn], alignment=ft.MainAxisAlignment.END),
-                    ),
+                    settings_list,
                     ft.Row([save_btn], alignment=ft.MainAxisAlignment.END),
-                ], spacing=T.SP_4),
-                width=640,
+                ], spacing=T.SP_4, tight=True),
+                width=736,
             ),
         ], spacing=T.SP_5, scroll=ft.ScrollMode.AUTO))
 
