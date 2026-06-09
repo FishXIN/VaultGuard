@@ -1,0 +1,47 @@
+name: Build Windows
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  build-windows:
+    name: Build Windows package
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Build Windows app
+        shell: pwsh
+        run: .\build_windows.ps1
+
+      - name: Verify Windows outputs
+        shell: pwsh
+        run: |
+          $exe = Get-ChildItem dist -Recurse -Filter VaultGuard.exe | Select-Object -First 1
+          if (-not $exe) {
+            throw "未找到 Windows exe"
+          }
+          Get-ChildItem dist
+          Get-ChildItem dist -Recurse -Filter VaultGuard.exe
+
+      - name: Upload Windows dist artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: VaultGuard-windows-dist
+          path: |
+            dist/VaultGuard-windows-*/
+            dist/VaultGuard-*-windows-*.zip
+            dist/checksums.txt
+          if-no-files-found: error
+          retention-days: 14
