@@ -375,10 +375,10 @@ class VaultGuardApp:
             font_family="-apple-system",
             visual_density=ft.VisualDensity.COMFORTABLE,
         )
-        p.window.width = 1120
-        p.window.height = 760
-        p.window.min_width = 960
-        p.window.min_height = 640
+        p.window.width = 920
+        p.window.height = 600
+        p.window.min_width = 720
+        p.window.min_height = 480
         # 隐藏原生标题栏，让侧边栏直接延伸到窗口顶部，交通灯按钮悬浮其上
         # （macOS 风格的无缝侧栏，参考飞书）。
         p.window.title_bar_hidden = True
@@ -1897,6 +1897,7 @@ class VaultGuardApp:
             total = int(t["total_files"] or 0)
             completed = int(t["copied_files"] or 0)
             failed = int(t["failed_files"] or 0)
+            skipped = int(t["skipped_files"] or 0)
             try:
                 deleted = int(t["deleted_files"] or 0)
             except (KeyError, IndexError):
@@ -1904,10 +1905,11 @@ class VaultGuardApp:
             if total <= 0:
                 total = completed + failed + deleted
             transferring = max(total - completed - failed - deleted, 0)
+            deleted_color = (T.DANGER_BG_DEEP if hasattr(T, "DANGER_BG_DEEP")
+                             else "#F76560")
             segments = [
                 (completed, T.SUCCESS),
-                (deleted, T.DANGER_BG_DEEP if hasattr(T, "DANGER_BG_DEEP")
-                 else "#F76560"),
+                (deleted, deleted_color),
                 (transferring, T.PRIMARY),
                 (failed, T.DANGER),
             ]
@@ -1919,13 +1921,20 @@ class VaultGuardApp:
             if not bars:
                 bars = [ft.Container(bgcolor=T.BORDER_LIGHT, height=6,
                                      expand=True)]
-            tooltip_parts = [f"已完成：{completed}"]
-            if deleted:
-                tooltip_parts.append(f"删除：{deleted}")
-            tooltip_parts.append(f"传输中：{transferring}")
-            if failed:
-                tooltip_parts.append(f"失败：{failed}")
-            tooltip = " / ".join(tooltip_parts)
+            # hover 明细：仅展示数量大于 0 的维度
+            tip_items = [
+                ("复制", completed),
+                ("删除", deleted),
+                ("跳过", skipped),
+                ("传输中", transferring),
+                ("失败", failed),
+            ]
+            tip_lines = [f"{label} {count} 个"
+                         for label, count in tip_items if count > 0]
+            if tip_lines:
+                tooltip = f"共 {total} 个文件\n" + "\n".join(tip_lines)
+            else:
+                tooltip = "暂无文件变更"
             return ft.Container(
                 content=ft.Row(bars, spacing=0, expand=True),
                 height=6,
@@ -2074,6 +2083,10 @@ class VaultGuardApp:
             return root
 
         list_holder = ft.Container(content=None, expand=True)
+        # 持久化 ListView：展开/收起时仅替换其 controls 并局部刷新，
+        # 避免重建控件树导致滚动位置被重置（"点一下就弹走"）。
+        tree_list = ft.ListView(spacing=0, padding=0, expand=True)
+        list_holder.content = tree_list
 
         def render_node(node: dict, depth: int, rows: list,
                         expanded: set[str], color: str) -> None:
@@ -2288,7 +2301,7 @@ class VaultGuardApp:
                 ink=False,
             )
 
-        def _rerender() -> None:
+        def _rerender(first: bool = False) -> None:
             rows: list = []
             for key, label, color, icon in group_meta:
                 rows.append(_section_header(key, label, color, icon))
@@ -2306,14 +2319,20 @@ class VaultGuardApp:
                 render_node(tree, depth=0, rows=rows,
                             expanded=expanded_state[key], color=color)
                 rows.append(ft.Container(height=T.SP_1))
-            list_holder.content = ft.ListView(rows, spacing=0,
-                                              padding=0, expand=True)
+            # 仅替换持久化 ListView 的 controls，保留滚动位置；
+            # 首次渲染走整页刷新，后续交互只局部 update 该列表。
+            tree_list.controls = rows
+            if first:
+                return
             try:
-                self.page.update()
+                tree_list.update()
             except Exception:
-                pass
+                try:
+                    self.page.update()
+                except Exception:
+                    pass
 
-        _rerender()
+        _rerender(first=True)
 
         # 头部摘要（复制 / 删除 / 失败 数量）
         copied_n = len(groups["copy"])
