@@ -2,9 +2,17 @@ name: Build Windows
 
 on:
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Optional release tag to update, for example v0.1.4"
+        required: false
+        default: ""
   push:
     tags:
       - "v*"
+
+permissions:
+  contents: write
 
 jobs:
   build-windows:
@@ -45,3 +53,30 @@ jobs:
             dist/checksums.txt
           if-no-files-found: error
           retention-days: 14
+
+      - name: Upload Windows package to release
+        if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.release_tag != '' }}
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.event.inputs.release_tag }}
+        run: |
+          $zip = Get-ChildItem dist -File -Filter "VaultGuard-*-windows-*.zip" | Select-Object -First 1
+          if (-not $zip) {
+            throw "未找到 Windows Release ZIP"
+          }
+
+          $releaseDir = "dist\release"
+          New-Item -ItemType Directory -Force -Path $releaseDir | Out-Null
+          gh release download $env:RELEASE_TAG --pattern checksums.txt --dir $releaseDir --clobber
+
+          $releaseChecksums = Join-Path $releaseDir "checksums.txt"
+          $windowsChecksums = "dist\checksums.txt"
+          $macLines = @()
+          if (Test-Path $releaseChecksums) {
+            $macLines = Get-Content $releaseChecksums | Where-Object { $_ -notmatch "windows" }
+          }
+          $winLines = Get-Content $windowsChecksums | Where-Object { $_ -match "windows" }
+          @($macLines + $winLines) | Set-Content -Path $releaseChecksums -Encoding ascii
+
+          gh release upload $env:RELEASE_TAG $zip.FullName $releaseChecksums --clobber
