@@ -77,6 +77,6 @@ jobs:
             $macLines = Get-Content $releaseChecksums | Where-Object { $_ -notmatch "windows" }
           }
           $winLines = Get-Content $windowsChecksums | Where-Object { $_ -match "windows" }
-          @($macLines + $winLines) | Set-Content -Path $releaseChecksums -Encoding ascii
+          @(@($macLines) + @($winLines)) | Set-Content -Path $releaseChecksums -Encoding ascii
 
           gh release upload $env:RELEASE_TAG $zip.FullName $releaseChecksums --clobber
