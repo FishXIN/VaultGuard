@@ -18,7 +18,7 @@ if (-not $SkipInstall) {
     Write-Host "==> 安装 Windows 打包依赖"
     & $Py -m pip install --upgrade pip
     & $Py -m pip install -r requirements.txt
-    & $Py -m pip install "flet>=0.85" pyinstaller pillow
+    & $Py -m pip install "flet>=0.85" "flet-desktop>=0.85" pyinstaller pillow
 }
 
 $Version = (& $Py -c "from vaultguard import __version__; print(__version__.lstrip('v'))").Trim()
@@ -66,6 +66,8 @@ Write-Host "==> 使用 PyInstaller 打包 Windows onedir 应用"
     --icon $Ico `
     --add-data "vaultguard;vaultguard" `
     --hidden-import flet `
+    --hidden-import flet_desktop `
+    --collect-all flet_desktop `
     --hidden-import tkinter `
     --hidden-import tkinter.filedialog `
     --distpath dist\windows `
