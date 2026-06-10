@@ -15,6 +15,7 @@ from vaultguard import __version__
 print(__version__.lstrip("v"))
 PY
 )
+ICON_ABS="$PWD/assets/icon.icns"
 ARCH=$(uname -m)
 if [ "$ARCH" = "arm64" ]; then
   RELEASE_ARCH="arm64"
@@ -49,13 +50,23 @@ echo "==> 使用 PyInstaller 打包（windowed / onedir 形式的 .app）"
 # 客户端，故打包时把运行时客户端路径指向一个空目录，让 hook 跳过收集。
 EMPTY_BIN="$PWD/.pack_empty_client_bin"
 rm -rf "$EMPTY_BIN" && mkdir -p "$EMPTY_BIN"
-mkdir -p build/VaultGuard
+mkdir -p build/VaultGuard dist
+
+# PyInstaller 在部分 macOS/Python 组合下会清理 workpath 后立刻写入
+# base_library.zip，但没有可靠重建父目录；构建期间守护该目录，避免偶发失败。
+(
+  while true; do
+    mkdir -p build/VaultGuard
+    sleep 0.05
+  done
+) &
+BUILD_DIR_GUARD_PID=$!
 env "$VIEW_ENV=$EMPTY_BIN" "$PYINSTALLER" main.py \
   --noconfirm \
   --log-level WARN \
   --windowed \
   --name VaultGuard \
-  --icon assets/icon.icns \
+  --icon "$ICON_ABS" \
   --osx-bundle-identifier com.vaultguard.app \
   --add-data "vaultguard:vaultguard" \
   --hidden-import "$RUNTIME_LOWER" \
@@ -75,7 +86,15 @@ env "$VIEW_ENV=$EMPTY_BIN" "$PYINSTALLER" main.py \
   --exclude-module idlelib \
   --exclude-module xmlrpc \
   --exclude-module pdb \
-  --distpath dist
+  --distpath dist \
+  --workpath build \
+  --specpath build
+PYINSTALLER_STATUS=$?
+kill "$BUILD_DIR_GUARD_PID" 2>/dev/null || true
+wait "$BUILD_DIR_GUARD_PID" 2>/dev/null || true
+if [ "$PYINSTALLER_STATUS" -ne 0 ]; then
+  exit "$PYINSTALLER_STATUS"
+fi
 
 APP_BUILT="dist/VaultGuard.app"
 [ -d "$APP_BUILT" ] || { echo "打包失败：未生成 $APP_BUILT"; exit 1; }
