@@ -730,14 +730,54 @@ class VaultGuardApp:
             pass
 
     def _open_update_page(self, url: str) -> None:
+        if self._open_external_url(url):
+            self._dismiss_update_card()
+            self._snack("已在浏览器打开下载页")
+        else:
+            self._snack("打开浏览器失败，请手动访问发布页", error=True)
+
+    def _open_external_url(self, url: str) -> bool:
+        """跨平台打开外部链接，返回是否成功。
+
+        打包为 LSUIElement / 无控制台的桌面 app 时 page.launch_url /
+        webbrowser 常静默失败，故各平台优先用系统原生方式：
+        macOS 用 `open`，Windows 用 os.startfile，Linux 用 xdg-open。
+        """
+        import subprocess
+        if sys.platform == "darwin":
+            try:
+                subprocess.Popen(["open", url])
+                return True
+            except Exception:  # noqa: BLE001
+                pass
+        elif sys.platform.startswith("win"):
+            try:
+                import os
+                os.startfile(url)  # type: ignore[attr-defined]
+                return True
+            except Exception:  # noqa: BLE001
+                pass
+            try:
+                subprocess.Popen(["cmd", "/c", "start", "", url], shell=False)
+                return True
+            except Exception:  # noqa: BLE001
+                pass
+        else:
+            try:
+                subprocess.Popen(["xdg-open", url])
+                return True
+            except Exception:  # noqa: BLE001
+                pass
         try:
             if hasattr(self.page, "launch_url"):
                 self.page.launch_url(url)
-            else:
-                webbrowser.open(url)
-        except Exception:
-            webbrowser.open(url)
-        self._dismiss_update_card()
+                return True
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            return bool(webbrowser.open(url))
+        except Exception:  # noqa: BLE001
+            return False
 
     def _run_ui(self, fn: Callable[[], None]) -> None:
         async def runner():
@@ -844,14 +884,10 @@ class VaultGuardApp:
             self._snack("暂无可发送的错误报告", error=True)
             return
         mailto = self.error_reporter.build_mailto(report)
-        try:
-            if hasattr(self.page, "launch_url"):
-                self.page.launch_url(mailto)
-            else:
-                webbrowser.open(mailto)
-        except Exception:
-            webbrowser.open(mailto)
-        self._snack("已打开邮件草稿，请确认后发送")
+        if self._open_external_url(mailto):
+            self._snack("已打开邮件草稿，请确认后发送")
+        else:
+            self._snack("打开邮件客户端失败", error=True)
 
     def _open_overlay(self, control) -> None:
         # Flet 0.85+：弹窗与 SnackBar 都是 DialogControl，统一用 show_dialog。
