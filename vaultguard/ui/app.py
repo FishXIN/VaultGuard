@@ -940,8 +940,8 @@ class VaultGuardApp:
             alignment=ft.Alignment.CENTER,
             # TextField suffix 默认按文本基线对齐，会让 28x28 按钮显得偏上。
             # 通过下移 margin 让按钮与输入文字行视觉居中（输入区高约 36，
-            # 按钮 28，单边 4px 即可对齐）。
-            margin=ft.Padding.only(top=4),
+            # 按钮 28）。+4px 会过头使图标偏低，+2px 才与提示文字真正居中对齐。
+            margin=ft.Padding.only(top=2),
             tooltip="选择源目录" if is_source else "选择目标目录",
             on_click=self._safe(prompt,
                                 lambda e, s=is_source: self._pick_dir(s)),
