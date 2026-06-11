@@ -953,8 +953,9 @@ class VaultGuardApp:
             focused_border_color=T.PRIMARY,
             cursor_color=T.PRIMARY,
             text_size=T.TEXT_14,
-            # hint/文字整体上移 6px：上 padding 减 6、下 padding 加 6（总高不变）。
-            content_padding=ft.Padding.only(left=12, right=12, top=2, bottom=14),
+            content_padding=ft.Padding.symmetric(vertical=8, horizontal=12),
+            # 文字/hint 垂直居中（默认即 CENTER=0），与右侧 icon 对齐。
+            text_vertical_align=ft.VerticalAlignment.CENTER,
         )
 
     def _picker_btn(self, is_source: bool) -> ft.Container:
@@ -974,8 +975,6 @@ class VaultGuardApp:
             bgcolor=idle_bg,
             border_radius=T.RADIUS,
             alignment=ft.Alignment.CENTER,
-            # TextField suffix 默认按文本基线对齐。这里上移让按钮与提示文字居中。
-            margin=ft.Padding.only(top=4),
             tooltip="选择源目录" if is_source else "选择目标目录",
             on_click=self._safe(prompt,
                                 lambda e, s=is_source: self._pick_dir(s)),
