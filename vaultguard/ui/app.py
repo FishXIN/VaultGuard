@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import asyncio
+import sys
 import threading
 import time
 import unicodedata
@@ -27,6 +28,10 @@ from .error_reporter import ErrorReporter
 from .helpers import fmt_eta, fmt_relative_time, fmt_size
 from .runtime import VIEW_PATH_ENV, ft
 
+# 平台判定：macOS 采用无边框（隐藏标题栏）的无缝侧栏风格；Windows/Linux 保留
+# 系统原生标题栏，以提供最小化 / 最大化 / 关闭三个窗口按钮。
+_IS_MACOS = sys.platform == "darwin"
+
 
 def _bundled_icon_path() -> Optional[str]:
     """返回随包打入的 Windows 窗口图标（assets/icon.ico）的绝对路径。
@@ -34,8 +39,6 @@ def _bundled_icon_path() -> Optional[str]:
     打包后（PyInstaller onedir）资源解包在 sys._MEIPASS/assets 下；
     开发态则取仓库根目录 assets/。找不到时返回 None。
     """
-    import sys
-
     candidates = []
     base = getattr(sys, "_MEIPASS", None)
     if base:
@@ -402,9 +405,11 @@ class VaultGuardApp:
         p.window.height = 600
         p.window.min_width = 720
         p.window.min_height = 480
-        # 隐藏原生标题栏，让侧边栏直接延伸到窗口顶部，交通灯按钮悬浮其上
-        # （macOS 风格的无缝侧栏，参考飞书）。
-        p.window.title_bar_hidden = True
+        # 仅 macOS 隐藏原生标题栏，让侧边栏延伸到窗口顶部、交通灯按钮悬浮其上
+        # （macOS 风格无缝侧栏，参考飞书）。Windows/Linux 保留系统标题栏，
+        # 以提供右上角最小化 / 最大化 / 关闭三个窗口按钮。
+        if _IS_MACOS:
+            p.window.title_bar_hidden = True
         # Windows 任务栏/窗口图标：flet 内置客户端默认用 flet logo，需显式指定
         # 随包打入的 .ico，让 Windows 显示「备份了嘛」自定义图标。
         ico = _bundled_icon_path()

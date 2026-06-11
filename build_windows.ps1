@@ -80,6 +80,30 @@ if (-not (Test-Path $AppDir)) {
     throw "打包失败：未生成 $AppDir"
 }
 
+Write-Host "==> 改写内置 Flet 客户端 (flet.exe) 的任务栏名称与图标"
+# Windows 上真正显示窗口的是 Flet 运行时 flet.exe，任务栏名称/图标取自其内嵌版本
+# 资源（默认显示 "Flet description" + flet logo）。必须用 rcedit 改写为本应用信息，
+# 否则任务栏与 Alt+Tab 都会显示 Flet 字样。
+$FletExe = Get-ChildItem -Path $AppDir -Recurse -Filter "flet.exe" -ErrorAction SilentlyContinue |
+    Select-Object -First 1
+if ($FletExe) {
+    $RcEdit = Join-Path $env:TEMP "rcedit-x64.exe"
+    if (-not (Test-Path $RcEdit)) {
+        Write-Host "    下载 rcedit"
+        Invoke-WebRequest -Uri "https://github.com/electron/rcedit/releases/download/v2.0.0/rcedit-x64.exe" -OutFile $RcEdit
+    }
+    & $RcEdit $FletExe.FullName `
+        --set-version-string "FileDescription" "备份了嘛" `
+        --set-version-string "ProductName" "备份了嘛" `
+        --set-version-string "CompanyName" "备份了嘛" `
+        --set-version-string "OriginalFilename" "VaultGuard.exe" `
+        --set-version-string "LegalCopyright" "" `
+        --set-icon $Ico
+    Write-Host "    已改写 $($FletExe.FullName)"
+} else {
+    Write-Warning "未在打包目录找到 flet.exe，跳过任务栏名称改写（任务栏可能仍显示 Flet）"
+}
+
 Write-Host "==> 同步 Windows 测试应用到 dist 目录"
 Copy-Item -Recurse -Force $AppDir $ReleaseAppDir
 $ReleaseExe = Join-Path $ReleaseAppDir "VaultGuard.exe"
