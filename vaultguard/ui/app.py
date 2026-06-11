@@ -2450,9 +2450,6 @@ class VaultGuardApp:
         def _settings_list(*controls) -> ft.Container:
             return ft.Container(
                 bgcolor=T.BG,
-                border=ft.Border.all(1, T.BORDER),
-                border_radius=T.RADIUS_MD,
-                clip_behavior=ft.ClipBehavior.HARD_EDGE,
                 expand=True,
                 content=ft.Column(
                     list(controls), spacing=0,
