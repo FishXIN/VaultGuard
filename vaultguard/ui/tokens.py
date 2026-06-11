@@ -42,8 +42,19 @@ RUNNING_BG = "#E5E6EB"
 
 
 # ============ 2. 字体 ============
-FONT_SANS = "-apple-system, BlinkMacSystemFont, Segoe UI, PingFang SC, Roboto, sans-serif"
-FONT_MONO = "SF Mono, JetBrains Mono, Consolas, Menlo, monospace"  # 路径/容量/速率
+# Flet 桌面端（Flutter 原生）的 font_family 不支持 CSS 式逗号回退列表，整串会被
+# 当作单个字体名。因此按平台给出单个有效字体名：
+# - Windows：用「微软雅黑」，它含完整中文字形且有 Regular/Bold，避免合成加粗
+#   导致的字重不均（否则中文会落到引擎默认回退字体并逐段合成加粗）。
+# - macOS：用「-apple-system」（系统会解析为 SF Pro + PingFang），保持既有视觉。
+import sys as _sys
+
+if _sys.platform.startswith("win"):
+    FONT_SANS = "Microsoft YaHei"
+    FONT_MONO = "Consolas"  # 路径/容量/速率
+else:
+    FONT_SANS = "-apple-system"
+    FONT_MONO = "SF Mono"  # 路径/容量/速率
 
 # 字号阶梯（桌面密度，紧凑克制）
 TEXT_12 = 12  # 标签、辅助

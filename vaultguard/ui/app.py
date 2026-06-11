@@ -395,7 +395,7 @@ class VaultGuardApp:
         p.theme_mode = ft.ThemeMode.LIGHT
         p.theme = ft.Theme(
             color_scheme_seed=T.PRIMARY,
-            font_family="-apple-system",
+            font_family=T.FONT_SANS,
             visual_density=ft.VisualDensity.COMFORTABLE,
         )
         p.window.width = 920
