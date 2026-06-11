@@ -19,12 +19,32 @@ import webbrowser
 from pathlib import Path
 from typing import Callable, Optional
 
+from vaultguard import __version__
 from vaultguard.core.models import CompareProgress, CopyProgress, DiffResult
 from vaultguard.core.service import BackupService
 from . import tokens as T
 from .error_reporter import ErrorReporter
 from .helpers import fmt_eta, fmt_relative_time, fmt_size
 from .runtime import VIEW_PATH_ENV, ft
+
+
+def _bundled_icon_path() -> Optional[str]:
+    """返回随包打入的 Windows 窗口图标（assets/icon.ico）的绝对路径。
+
+    打包后（PyInstaller onedir）资源解包在 sys._MEIPASS/assets 下；
+    开发态则取仓库根目录 assets/。找不到时返回 None。
+    """
+    import sys
+
+    candidates = []
+    base = getattr(sys, "_MEIPASS", None)
+    if base:
+        candidates.append(Path(base) / "assets" / "icon.ico")
+    candidates.append(Path(__file__).resolve().parents[2] / "assets" / "icon.ico")
+    for p in candidates:
+        if p.is_file():
+            return str(p)
+    return None
 
 
 # ============ 侧边导航图标（内联 assets/Icon 下的 SVG，随模块自包含） ============
@@ -360,14 +380,17 @@ class VaultGuardApp:
         self._history_refreshing = False
         self._last_log_file = ""
 
+        self._update_card: Optional[ft.Control] = None
+
         self._setup_page()
         self._build_layout()
         self._reset_task_home()
+        self._start_update_check()
 
     # ---------- 页面基础 ----------
     def _setup_page(self) -> None:
         p = self.page
-        p.title = "备份了嘛 · 增量备份"
+        p.title = "备份了嘛"
         p.bgcolor = T.BG
         p.theme_mode = ft.ThemeMode.LIGHT
         p.theme = ft.Theme(
@@ -382,6 +405,11 @@ class VaultGuardApp:
         # 隐藏原生标题栏，让侧边栏直接延伸到窗口顶部，交通灯按钮悬浮其上
         # （macOS 风格的无缝侧栏，参考飞书）。
         p.window.title_bar_hidden = True
+        # Windows 任务栏/窗口图标：flet 内置客户端默认用 flet logo，需显式指定
+        # 随包打入的 .ico，让 Windows 显示「备份了嘛」自定义图标。
+        ico = _bundled_icon_path()
+        if ico:
+            p.window.icon = ico
         p.padding = 0
 
     def _build_layout(self) -> None:
@@ -557,6 +585,124 @@ class VaultGuardApp:
         self._task_stage = "home"
         self._set_task_status(None)
         self._show_home()
+
+    # ---------- 版本更新检测 ----------
+    def _start_update_check(self) -> None:
+        """启动时在后台线程检测新版本，发现后在右上角弹出更新卡片。"""
+        def work() -> None:
+            from vaultguard.core.updater import check_for_update
+            try:
+                info = check_for_update()
+            except Exception:  # noqa: BLE001 静默：检测失败不打扰用户
+                return
+            if info is not None:
+                self._run_ui(lambda: self._show_update_card(info))
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _show_update_card(self, info) -> None:
+        """右上角悬浮的更新提示卡片（不抢焦点的轻量浮层）。"""
+        self._dismiss_update_card()
+
+        close_btn = ft.Container(
+            content=ft.Icon(ft.Icons.CLOSE_ROUNDED, size=16,
+                            color=T.TEXT_TERTIARY),
+            width=24, height=24,
+            border_radius=T.RADIUS,
+            alignment=ft.Alignment.CENTER,
+            on_click=self._safe("忽略更新",
+                                lambda e: self._dismiss_update_card()),
+            ink=False,
+        )
+
+        def _close_hover(e: ft.HoverEvent, c=close_btn) -> None:
+            try:
+                c.bgcolor = T.FILL_HOVER if str(e.data).lower() == "true" else None
+                c.update()
+            except Exception:
+                pass
+
+        close_btn.on_hover = _close_hover
+
+        card = ft.Container(
+            width=320,
+            bgcolor=T.BG,
+            border_radius=T.RADIUS_MD,
+            border=ft.Border.all(1, T.BORDER),
+            padding=T.SP_4,
+            shadow=T.shadow_md(),
+            content=ft.Column([
+                ft.Row([
+                    ft.Row([
+                        ft.Icon(ft.Icons.SYSTEM_UPDATE_ALT_ROUNDED,
+                                size=18, color=T.PRIMARY),
+                        ft.Text("发现新版本", size=T.TEXT_14,
+                                weight=T.FW_MEDIUM, color=T.TEXT_TITLE),
+                    ], spacing=T.SP_2, tight=True,
+                       vertical_alignment=ft.CrossAxisAlignment.CENTER),
+                    close_btn,
+                ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                   vertical_alignment=ft.CrossAxisAlignment.CENTER),
+                ft.Row([
+                    _mono_text(f"v{__version__}", size=T.TEXT_13,
+                               color=T.TEXT_TERTIARY),
+                    ft.Icon(ft.Icons.ARROW_FORWARD_ROUNDED, size=14,
+                            color=T.TEXT_TERTIARY),
+                    _mono_text(f"v{info.version}", size=T.TEXT_13,
+                               color=T.PRIMARY),
+                ], spacing=T.SP_2, tight=True,
+                   vertical_alignment=ft.CrossAxisAlignment.CENTER),
+                _muted_text("有可用的新版本，是否前往下载更新？",
+                            size=T.TEXT_12),
+                ft.Row([
+                    _default_button("忽略",
+                                    on_click=self._safe(
+                                        "忽略更新",
+                                        lambda e: self._dismiss_update_card())),
+                    _primary_button("立即更新",
+                                    icon=ft.Icons.DOWNLOAD_ROUNDED,
+                                    on_click=self._safe(
+                                        "前往更新",
+                                        lambda e, u=info.html_url:
+                                            self._open_update_page(u))),
+                ], alignment=ft.MainAxisAlignment.END, spacing=T.SP_2),
+            ], spacing=T.SP_3, tight=True),
+        )
+
+        # 悬浮在窗口右上角，避让顶部拖拽条（HEADER_H）。
+        holder = ft.Container(
+            content=card,
+            alignment=ft.Alignment.TOP_RIGHT,
+            padding=ft.Padding.only(top=T.HEADER_H + T.SP_2, right=T.SP_5),
+            expand=True,
+        )
+        self._update_card = holder
+        try:
+            self.page.overlay.append(holder)
+            self.page.update()
+        except Exception:
+            self._update_card = None
+
+    def _dismiss_update_card(self) -> None:
+        card = self._update_card
+        if card is None:
+            return
+        self._update_card = None
+        try:
+            self.page.overlay.remove(card)
+            self.page.update()
+        except Exception:
+            pass
+
+    def _open_update_page(self, url: str) -> None:
+        try:
+            if hasattr(self.page, "launch_url"):
+                self.page.launch_url(url)
+            else:
+                webbrowser.open(url)
+        except Exception:
+            webbrowser.open(url)
+        self._dismiss_update_card()
 
     def _run_ui(self, fn: Callable[[], None]) -> None:
         async def runner():

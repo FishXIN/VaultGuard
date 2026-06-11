@@ -65,9 +65,11 @@ Write-Host "==> 使用 PyInstaller 打包 Windows onedir 应用"
     --name VaultGuard `
     --icon $Ico `
     --add-data "vaultguard;vaultguard" `
+    --add-data "assets\icon.ico;assets" `
     --hidden-import flet `
     --hidden-import flet_desktop `
     --collect-all flet_desktop `
+    --collect-data flet `
     --hidden-import tkinter `
     --hidden-import tkinter.filedialog `
     --distpath dist\windows `
