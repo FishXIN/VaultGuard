@@ -32,10 +32,10 @@ if (-not (Test-Path $Ico)) {
 from pathlib import Path
 from PIL import Image
 
-src = Path("assets/icon_1024.png")
+src = Path("assets/icon.png")
 dst = Path("assets/icon.ico")
 if not src.exists():
-    raise SystemExit("未找到 assets/icon_1024.png，无法生成 Windows .ico")
+    raise SystemExit("未找到 assets/icon.png，无法生成 Windows .ico")
 
 img = Image.open(src).convert("RGBA")
 img.save(dst, sizes=[(16, 16), (32, 32), (48, 48), (64, 64), (128, 128), (256, 256)])

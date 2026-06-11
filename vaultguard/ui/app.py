@@ -1075,42 +1075,11 @@ class VaultGuardApp:
                 ], horizontal_alignment=ft.CrossAxisAlignment.CENTER,
                     spacing=T.SP_1),
                 expand=True, alignment=ft.Alignment.CENTER,
-                padding=ft.Padding.symmetric(vertical=T.SP_3,
-                                             horizontal=T.SP_2),
+                padding=T.SP_3,
             )
 
         def vline():
             return ft.Container(width=1, bgcolor=T.BORDER, height=44)
-
-        # 智能收缩：仅展示数量大于 0 的维度，"预计传输"恒显，
-        # 由此为生效项留出更宽空间，避免右侧被截断。
-        stat_defs = [
-            (diff.new_count > 0,
-             lambda: stat_cell(self._cf_stat_new, "新增", T.SUCCESS,
-                               ft.Icons.ADD_CIRCLE_OUTLINE_ROUNDED)),
-            (diff.updated_count > 0,
-             lambda: stat_cell(self._cf_stat_upd, "更新", T.WARNING,
-                               ft.Icons.AUTORENEW_ROUNDED)),
-            (diff.extra_count > 0,
-             lambda: stat_cell(self._cf_stat_del, "删除", T.DANGER,
-                               ft.Icons.DELETE_OUTLINE_ROUNDED)),
-            (diff.skipped_count > 0,
-             lambda: stat_cell(
-                 ft.Text(str(diff.skipped_count), size=T.TEXT_28,
-                         weight=T.FW_MEDIUM, color=T.TEXT_TERTIARY,
-                         font_family=T.FONT_MONO),
-                 "跳过", T.TEXT_TERTIARY, ft.Icons.SKIP_NEXT_ROUNDED)),
-            (True,
-             lambda: stat_cell(self._cf_stat_bytes, "预计传输", T.PRIMARY,
-                               ft.Icons.UPLOAD_OUTLINED)),
-        ]
-        stat_cells: list = []
-        for show, builder in stat_defs:
-            if not show:
-                continue
-            if stat_cells:
-                stat_cells.append(vline())
-            stat_cells.append(builder())
 
         # 全选框 + 已选计数 + 右上角排序 tab
         self._cf_select_all = ft.Checkbox(
@@ -1147,8 +1116,25 @@ class VaultGuardApp:
             self._page_header("待备份清单", f"{src}  →  {dst}"),
             ft.Container(height=1, bgcolor=T.BORDER_LIGHT),
             _card(
-                ft.Row(stat_cells,
-                       vertical_alignment=ft.CrossAxisAlignment.CENTER),
+                ft.Row([
+                    stat_cell(self._cf_stat_new, "新增", T.SUCCESS,
+                              ft.Icons.ADD_CIRCLE_OUTLINE_ROUNDED),
+                    vline(),
+                    stat_cell(self._cf_stat_upd, "更新", T.WARNING,
+                              ft.Icons.AUTORENEW_ROUNDED),
+                    vline(),
+                    stat_cell(self._cf_stat_del, "删除", T.DANGER,
+                              ft.Icons.DELETE_OUTLINE_ROUNDED),
+                    vline(),
+                    stat_cell(ft.Text(str(diff.skipped_count), size=T.TEXT_28,
+                                      weight=T.FW_MEDIUM, color=T.TEXT_TERTIARY,
+                                      font_family=T.FONT_MONO),
+                              "跳过", T.TEXT_TERTIARY,
+                              ft.Icons.SKIP_NEXT_ROUNDED),
+                    vline(),
+                    stat_cell(self._cf_stat_bytes, "预计传输", T.PRIMARY,
+                              ft.Icons.UPLOAD_OUTLINED),
+                ], vertical_alignment=ft.CrossAxisAlignment.CENTER),
             ),
             ft.Container(
                 content=ft.Column([toolbar, self._cf_list_holder],
