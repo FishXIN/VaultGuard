@@ -2403,19 +2403,13 @@ class VaultGuardApp:
         def _divider() -> ft.Container:
             return ft.Container(height=1, bgcolor=T.BORDER_LIGHT)
 
-        def _section_label(title: str, desc: str, icon) -> ft.Container:
+        def _section_label(title: str) -> ft.Container:
             return ft.Container(
-                content=ft.Row([
-                    ft.Icon(icon, color=T.PRIMARY, size=16),
-                    ft.Column([
-                        ft.Text(title, size=T.TEXT_13, weight=T.FW_MEDIUM,
-                                color=T.TEXT_TITLE, font_family=T.FONT_SANS),
-                        _muted_text(desc, size=T.TEXT_12),
-                    ], spacing=2, tight=True, expand=True),
-                ], spacing=T.SP_2,
-                    vertical_alignment=ft.CrossAxisAlignment.CENTER),
-                padding=ft.Padding.symmetric(vertical=12, horizontal=16),
-                bgcolor=T.FILL,
+                content=ft.Text(
+                    title, size=T.TEXT_14, weight=T.FW_SEMIBOLD,
+                    color=T.TEXT_TITLE, font_family=T.FONT_SANS),
+                padding=ft.Padding.only(left=16, right=16, top=18, bottom=10),
+                bgcolor=T.BG,
             )
 
         def _setting_row(title: str, desc: str, control,
@@ -2459,7 +2453,10 @@ class VaultGuardApp:
                 border=ft.Border.all(1, T.BORDER),
                 border_radius=T.RADIUS_MD,
                 clip_behavior=ft.ClipBehavior.HARD_EDGE,
-                content=ft.Column(list(controls), spacing=0, tight=True),
+                expand=True,
+                content=ft.Column(
+                    list(controls), spacing=0,
+                    scroll=ft.ScrollMode.AUTO, expand=True),
             )
 
         self.f_tolerance = _tf(
@@ -2533,10 +2530,7 @@ class VaultGuardApp:
             tooltip=(None if has_error_report else "最近没有报错需要提交"))
 
         settings_list = _settings_list(
-            _section_label(
-                "对比策略",
-                "控制文件差异判断的精度与范围。",
-                ft.Icons.TUNE_ROUNDED),
+            _section_label("对比策略"),
             _field_row(
                 "mtime 容差",
                 "允许源目录与目标目录的文件时间存在轻微误差，单位为秒。",
@@ -2546,10 +2540,7 @@ class VaultGuardApp:
                 "检测文件容量变化",
                 "容量变化会被视为需要同步，适合增量备份默认开启。",
                 self.f_compare_size),
-            _section_label(
-                "文件安全",
-                "控制复制校验、失败重试与删除同步行为。",
-                ft.Icons.VERIFIED_USER_OUTLINED),
+            _section_label("文件安全"),
             _setting_row(
                 "Hash 校验",
                 "复制完成后校验文件内容，速度更慢但可靠性更高。",
@@ -2559,10 +2550,7 @@ class VaultGuardApp:
                 "失败重试次数",
                 "单个文件复制失败后的自动重试次数。",
                 self.f_retry),
-            _section_label(
-                "删除策略",
-                "影响目标目录中多余文件的处理方式。",
-                ft.Icons.WARNING_AMBER_ROUNDED),
+            _section_label("删除策略"),
             _setting_row(
                 "删除同步",
                 "目标目录中多余文件会随源目录删除，开启前请确认备份策略。",
@@ -2573,18 +2561,12 @@ class VaultGuardApp:
                 "移入回收区",
                 "删除同步时优先移入系统回收区，降低误删风险。",
                 self.f_use_recycle),
-            _section_label(
-                "排除规则",
-                "每行一条规则，支持通配符。",
-                ft.Icons.FILTER_ALT_OUTLINED),
+            _section_label("排除规则"),
             _textarea_row(
                 "忽略文件与目录",
                 "命中的文件或目录不会参与对比与备份。",
                 self.f_exclude),
-            _section_label(
-                "错误反馈",
-                "本地记录异常上下文，便于快速定位问题。",
-                ft.Icons.BUG_REPORT_OUTLINED),
+            _section_label("错误反馈"),
             ft.Container(
                 content=data_dir_row,
                 padding=ft.Padding.only(left=16, right=16, top=14),
@@ -2606,14 +2588,16 @@ class VaultGuardApp:
 
         # 设置面板自适应：用 Row 强制让面板撑满 content 区域可用宽度，
         # 不再写死 736px，从而在窗口任意宽度下都不会出现右侧大片空白。
+        # 滚动条收在面板边框内部（参考历史记录页），底部“保存设置”按钮固定，
+        # 避免滚动条覆盖到按钮。
         self._set_content(ft.Column([
             self._page_header("设置"),
             ft.Container(height=1, bgcolor=T.BORDER_LIGHT),
             ft.Row([
                 ft.Container(content=settings_list, expand=True),
-            ], spacing=0),
+            ], spacing=0, expand=True),
             ft.Row([save_btn], alignment=ft.MainAxisAlignment.END),
-        ], spacing=T.SP_4, scroll=ft.ScrollMode.AUTO))
+        ], spacing=T.SP_4, expand=True))
 
     # ========== 数据目录切换 ==========
     def _pick_data_dir(self) -> None:
