@@ -66,6 +66,7 @@ Write-Host "==> 使用 PyInstaller 打包 Windows onedir 应用"
     --icon $Ico `
     --add-data "vaultguard;vaultguard" `
     --add-data "assets\icon.ico;assets" `
+    --add-data "assets\fonts\NotoSansSC.ttf;assets\fonts" `
     --hidden-import flet `
     --hidden-import flet_desktop `
     --collect-all flet_desktop `

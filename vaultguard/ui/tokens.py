@@ -42,19 +42,18 @@ RUNNING_BG = "#E5E6EB"
 
 
 # ============ 2. 字体 ============
-# Flet 桌面端（Flutter 原生）的 font_family 不支持 CSS 式逗号回退列表，整串会被
-# 当作单个字体名。因此按平台给出单个有效字体名：
-# - Windows：用「微软雅黑」，它含完整中文字形且有 Regular/Bold，避免合成加粗
-#   导致的字重不均（否则中文会落到引擎默认回退字体并逐段合成加粗）。
-# - macOS：用「-apple-system」（系统会解析为 SF Pro + PingFang），保持既有视觉。
+# 为让 macOS 与 Windows 字形、字重完全一致，统一打包并使用思源黑体
+# （Noto Sans SC 可变字体，含 100–900 全字重，免费可商用 OFL）。
+# 通过 page.fonts 注册后，两端都按同一字体渲染，彻底消除「Windows 上
+# medium/semibold 字重缺失被回退成细体」「PingFang 与雅黑字形不同」的问题。
+# 字体文件位于 assets/fonts/NotoSansSC.ttf，由运行时 assets_dir 提供。
+FONT_FAMILY_NAME = "Noto Sans SC"
+FONT_ASSET_REL = "fonts/NotoSansSC.ttf"
+FONT_SANS = FONT_FAMILY_NAME
+# 等宽场景（路径 / 容量 / 速率）仍用各平台系统等宽拉丁字体，数字宽度一致。
 import sys as _sys
 
-if _sys.platform.startswith("win"):
-    FONT_SANS = "Microsoft YaHei"
-    FONT_MONO = "Consolas"  # 路径/容量/速率
-else:
-    FONT_SANS = "-apple-system"
-    FONT_MONO = "SF Mono"  # 路径/容量/速率
+FONT_MONO = "Consolas" if _sys.platform.startswith("win") else "SF Mono"
 
 # 字号阶梯（桌面密度，紧凑克制）
 TEXT_12 = 12  # 标签、辅助

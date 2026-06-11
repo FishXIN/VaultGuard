@@ -50,6 +50,28 @@ def _bundled_icon_path() -> Optional[str]:
     return None
 
 
+def _bundled_font_path() -> Optional[str]:
+    """返回随包打入的思源黑体（assets/fonts/NotoSansSC.ttf）的绝对路径。
+
+    打包后（PyInstaller onedir）资源解包在 sys._MEIPASS/assets 下；
+    开发态则取仓库根目录 assets/。找不到时返回 None（回退系统字体）。
+
+    注意：page.fonts 接受本地绝对路径或 URL，这里直接给绝对路径，
+    无需依赖 flet 的 assets_dir 机制，跨打包形态更稳妥。
+    """
+    candidates = []
+    base = getattr(sys, "_MEIPASS", None)
+    if base:
+        candidates.append(Path(base) / "assets" / "fonts" / "NotoSansSC.ttf")
+    candidates.append(
+        Path(__file__).resolve().parents[2] / "assets" / "fonts" / "NotoSansSC.ttf"
+    )
+    for p in candidates:
+        if p.is_file():
+            return str(p)
+    return None
+
+
 # ============ 侧边导航图标（内联 assets/Icon 下的 SVG，随模块自包含） ============
 # 设计稿描边色固定为 #0B0B0F，运行时通过 ft.Image 的 SRC_IN 着色为选中/未选中色。
 _NAV_SVG_TASK = (
@@ -395,10 +417,18 @@ class VaultGuardApp:
         p = self.page
         p.title = "备份了嘛"
         p.bgcolor = T.BG
+        # 注册随包打入的思源黑体（Noto Sans SC 可变字体），让 macOS / Windows
+        # 字形与字重完全一致。注册失败（找不到字体文件）时回退系统字体。
+        font_path = _bundled_font_path()
+        if font_path:
+            p.fonts = {T.FONT_FAMILY_NAME: font_path}
+            font_family = T.FONT_FAMILY_NAME
+        else:
+            font_family = "-apple-system" if _IS_MACOS else None
         p.theme_mode = ft.ThemeMode.LIGHT
         p.theme = ft.Theme(
             color_scheme_seed=T.PRIMARY,
-            font_family=T.FONT_SANS,
+            font_family=font_family,
             visual_density=ft.VisualDensity.COMFORTABLE,
         )
         p.window.width = 920
@@ -923,7 +953,8 @@ class VaultGuardApp:
             focused_border_color=T.PRIMARY,
             cursor_color=T.PRIMARY,
             text_size=T.TEXT_14,
-            content_padding=ft.Padding.symmetric(vertical=8, horizontal=12),
+            # hint/文字整体上移 6px：上 padding 减 6、下 padding 加 6（总高不变）。
+            content_padding=ft.Padding.only(left=12, right=12, top=2, bottom=14),
         )
 
     def _picker_btn(self, is_source: bool) -> ft.Container:
@@ -943,10 +974,8 @@ class VaultGuardApp:
             bgcolor=idle_bg,
             border_radius=T.RADIUS,
             alignment=ft.Alignment.CENTER,
-            # TextField suffix 默认按文本基线对齐，会让 28x28 按钮显得偏上。
-            # 通过下移 margin 让按钮与输入文字行视觉居中（输入区高约 36，
-            # 按钮 28）。+4px 会过头使图标偏低，+2px 才与提示文字真正居中对齐。
-            margin=ft.Padding.only(top=2),
+            # TextField suffix 默认按文本基线对齐。这里上移让按钮与提示文字居中。
+            margin=ft.Padding.only(top=4),
             tooltip="选择源目录" if is_source else "选择目标目录",
             on_click=self._safe(prompt,
                                 lambda e, s=is_source: self._pick_dir(s)),

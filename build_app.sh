@@ -69,6 +69,7 @@ env "$VIEW_ENV=$EMPTY_BIN" "$PYINSTALLER" main.py \
   --icon "$ICON_ABS" \
   --osx-bundle-identifier com.vaultguard.app \
   --add-data "vaultguard:vaultguard" \
+  --add-data "$PWD/assets/fonts/NotoSansSC.ttf:assets/fonts" \
   --hidden-import "$RUNTIME_LOWER" \
   --hidden-import AppKit \
   --hidden-import Foundation \
