@@ -49,6 +49,19 @@ def _pick_windows(title: str) -> Optional[str]:
     import tkinter
     from tkinter import filedialog
 
+    # 高 DPI 屏幕上若进程未声明 DPI 感知，系统会对窗口做位图拉伸，导致
+    # 对话框文字/控件发虚。优先按显示器分别设置 Per-Monitor 感知，失败再
+    # 逐级降级到系统级感知。
+    try:
+        import ctypes
+
+        try:
+            ctypes.windll.shcore.SetProcessDpiAwareness(2)
+        except Exception:  # noqa: BLE001
+            ctypes.windll.user32.SetProcessDPIAware()
+    except Exception:  # noqa: BLE001
+        pass
+
     root = tkinter.Tk()
     root.withdraw()
     # 置顶并抢占焦点，避免对话框出现在主窗口后面。
