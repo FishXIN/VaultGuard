@@ -181,6 +181,88 @@ def asset_url(info: ReleaseInfo) -> tuple[str, str]:
     return f"{_DOWNLOAD_BASE}/{info.tag}/{name}", name
 
 
+def _list_release_assets(tag: str) -> list[str]:
+    """获取指定 tag 下真实存在的资产下载直链。
+
+    优先解析 github.com 的 expanded_assets 页面（不走 API、不限流），
+    失败再退回 REST API。任一来源失败都返回空列表。
+    """
+    urls: list[str] = []
+    # 1) expanded_assets 页面
+    try:
+        page = f"https://github.com/{_REPO}/releases/expanded_assets/{tag}"
+        html = _http_get(page, "text/html").decode("utf-8", "ignore")
+        urls = re.findall(
+            rf"/{_REPO}/releases/download/[^\"'> ]+", html)
+        urls = ["https://github.com" + u for u in urls]
+    except Exception:  # noqa: BLE001
+        urls = []
+    if urls:
+        return sorted(set(urls))
+    # 2) REST API 兜底
+    try:
+        raw = _http_get(f"{_RELEASES_API}/tags/{tag}",
+                        "application/vnd.github+json")
+        data = json.loads(raw.decode("utf-8"))
+        return [a.get("browser_download_url")
+                for a in data.get("assets", [])
+                if a.get("browser_download_url")]
+    except Exception:  # noqa: BLE001
+        return []
+
+
+def _pick_platform_asset(urls: list[str]) -> Optional[str]:
+    """从资产直链列表中，按当前平台与架构挑出最合适的安装包。"""
+    arch = _current_arch()
+    is_win = sys.platform.startswith("win")
+    is_mac = sys.platform == "darwin"
+
+    def name_of(u: str) -> str:
+        return u.rsplit("/", 1)[-1].lower()
+
+    # 仅考虑安装包格式
+    pkgs = [u for u in urls
+            if name_of(u).endswith((".zip", ".dmg", ".exe", ".msi"))]
+    if not pkgs:
+        return None
+
+    def score(u: str) -> int:
+        n = name_of(u)
+        s = 0
+        # 平台匹配（Windows 资产名含 windows / .exe / .msi）
+        win_like = ("windows" in n or n.endswith((".exe", ".msi")))
+        if is_win and win_like:
+            s += 100
+        elif (is_mac or not is_win) and not win_like:
+            s += 100
+        # 架构匹配
+        if arch in n:
+            s += 10
+        elif arch == "x64" and ("amd64" in n or "x86_64" in n):
+            s += 10
+        return s
+
+    best = max(pkgs, key=score)
+    # 至少要平台匹配上才采用，否则视为未找到
+    return best if score(best) >= 100 else None
+
+
+def resolve_asset_url(info: ReleaseInfo) -> tuple[str, str]:
+    """定位当前平台安装包的 (下载直链, 文件名)。
+
+    优先用 release 的真实资产清单匹配，避免命名偏差导致 404；
+    匹配不到时退回按规范硬拼的链接。
+    """
+    try:
+        urls = _list_release_assets(info.tag)
+        picked = _pick_platform_asset(urls)
+        if picked:
+            return picked, picked.rsplit("/", 1)[-1]
+    except Exception:  # noqa: BLE001
+        pass
+    return asset_url(info)
+
+
 def download_asset(
     info: ReleaseInfo,
     dest_dir: str,
@@ -191,7 +273,7 @@ def download_asset(
     progress(downloaded_bytes, total_bytes) 回调用于上报进度；
     total 未知时传 0。下载失败会抛出异常，由调用方处理。
     """
-    url, name = asset_url(info)
+    url, name = resolve_asset_url(info)
     os.makedirs(dest_dir, exist_ok=True)
     dest = os.path.join(dest_dir, name)
     tmp = dest + ".part"

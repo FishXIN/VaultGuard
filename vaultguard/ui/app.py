@@ -201,10 +201,12 @@ def _task_status_label(status: str) -> str:
 
 
 def _primary_button(text: str, icon=None, on_click=None,
-                    disabled: bool = False) -> ft.Container:
+                    disabled: bool = False,
+                    tooltip: Optional[str] = None) -> ft.Container:
     """主按钮：实心蓝（规范 §5.1 .vg-btn--primary）。
 
     无上浮、无 glow、无 scale；hover 仅变背景色。
+    禁用态：灰底、不可点击，hover 显示 tooltip 提示。
     """
     children = []
     if icon is not None:
@@ -223,6 +225,7 @@ def _primary_button(text: str, icon=None, on_click=None,
         alignment=ft.Alignment.CENTER,
         animate=ft.Animation(T.DUR_FAST, T.EASE),
         on_click=(None if disabled else on_click),
+        tooltip=tooltip if disabled else None,
         ink=False,
     )
 
@@ -770,12 +773,25 @@ class VaultGuardApp:
             try:
                 path = updater.download_asset(info, dest_dir, on_progress)
             except Exception as ex:  # noqa: BLE001
-                self._run_ui(lambda: self._on_download_failed(info))
+                reason = self._download_error_reason(ex)
+                self._run_ui(lambda r=reason: self._on_download_failed(info, r))
                 self._record_error("下载更新失败", ex)
                 return
             self._run_ui(lambda: self._on_download_done(path))
 
         threading.Thread(target=work, daemon=True).start()
+
+    @staticmethod
+    def _download_error_reason(ex: Exception) -> str:
+        """把下载异常翻译成简短可读的失败原因。"""
+        import urllib.error
+        if isinstance(ex, urllib.error.HTTPError):
+            if ex.code == 404:
+                return "未找到当前平台的安装包"
+            return f"服务器返回 {ex.code}"
+        if isinstance(ex, urllib.error.URLError):
+            return "网络连接失败"
+        return "下载出错"
 
     def _on_download_done(self, path: str) -> None:
         self._update_downloading = False
@@ -787,9 +803,11 @@ class VaultGuardApp:
                                 lambda e, p=path: self._reveal_in_file_manager(p)))
         self._snack("新版本已下载完成")
 
-    def _on_download_failed(self, info) -> None:
+    def _on_download_failed(self, info, reason: str = "") -> None:
         self._update_downloading = False
-        self._set_update_progress("下载失败，可前往发布页手动下载")
+        tip = f"下载失败：{reason}，可前往发布页手动下载" if reason \
+            else "下载失败，可前往发布页手动下载"
+        self._set_update_progress(tip)
         # 失败时退回「前往发布页」兜底。
         self._set_update_action(
             "前往发布页", icon=ft.Icons.OPEN_IN_NEW_ROUNDED,
@@ -1054,32 +1072,58 @@ class VaultGuardApp:
         self.src_field = self._path_field(
             "源目录", self.source_path,
             "请输入或选择路径",
-            lambda e: setattr(self, "source_path", e.control.value),
+            self._on_home_path_change(True),
             suffix=self._picker_btn(True))
         self.dst_field = self._path_field(
             "目标目录", self.target_path,
             "请输入或选择路径",
-            lambda e: setattr(self, "target_path", e.control.value),
+            self._on_home_path_change(False),
             suffix=self._picker_btn(False))
+
+        self._compare_btn_holder = ft.Container()
+        self._refresh_compare_btn()
 
         self._set_task_content(ft.Column([
             self._page_header("你好，今天备份了嘛？"),
             ft.Container(height=1, bgcolor=T.BORDER_LIGHT),
-            _card(
+            ft.Column([
                 ft.Column([
                     self.src_field,
                     self.dst_field,
                 ], spacing=T.SP_5, tight=True),
                 ft.Container(height=T.SP_3),
                 ft.Row([
-                    _primary_button("开始对比",
-                                    icon=ft.Icons.COMPARE_ARROWS_ROUNDED,
-                                    on_click=self._safe(
-                                        "开始对比", lambda e: self._do_compare())),
+                    self._compare_btn_holder,
                 ], alignment=ft.MainAxisAlignment.END),
-                padding=T.SP_6,
-            ),
+            ], spacing=T.SP_3, tight=True),
         ], spacing=T.SP_5, scroll=ft.ScrollMode.AUTO))
+
+    def _on_home_path_change(self, is_source: bool):
+        def _handler(e: ft.ControlEvent) -> None:
+            if is_source:
+                self.source_path = e.control.value
+            else:
+                self.target_path = e.control.value
+            self._refresh_compare_btn()
+        return _handler
+
+    def _refresh_compare_btn(self) -> None:
+        """根据源/目标路径是否填写，切换“开始对比”按钮的可点击状态。"""
+        holder = getattr(self, "_compare_btn_holder", None)
+        if holder is None:
+            return
+        ready = bool(self.source_path.strip()) and bool(self.target_path.strip())
+        holder.content = _primary_button(
+            "开始对比",
+            icon=ft.Icons.COMPARE_ARROWS_ROUNDED,
+            on_click=self._safe("开始对比", lambda e: self._do_compare()),
+            disabled=not ready,
+            tooltip="请先选择源目录和目标目录",
+        )
+        try:
+            holder.update()
+        except Exception:
+            pass
 
     def _path_field(self, label, value, hint, on_change, suffix=None) -> ft.TextField:
         return ft.TextField(
@@ -1170,6 +1214,7 @@ class VaultGuardApp:
                 else:
                     self.target_path = path
                     self.dst_field.value = path
+                self._refresh_compare_btn()
                 self.page.update()
 
             self._run_ui(apply_path)
