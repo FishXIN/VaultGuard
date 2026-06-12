@@ -638,6 +638,19 @@ class VaultGuardApp:
     def _show_update_card(self, info) -> None:
         """右上角悬浮的更新提示卡片（不抢焦点的轻量浮层）。"""
         self._dismiss_update_card()
+        self._update_info = info
+        self._update_downloading = False
+
+        # 进度文案：默认隐藏，下载时显示百分比 / 结果。
+        self._update_progress_text = _muted_text("", size=T.TEXT_12)
+        self._update_progress_text.visible = False
+
+        # 主操作按钮：初始为「下载更新」，点击后触发后台下载。
+        self._update_action_btn = _primary_button(
+            "下载更新",
+            icon=ft.Icons.DOWNLOAD_ROUNDED,
+            on_click=self._safe("下载更新",
+                                lambda e: self._start_download_update()))
 
         close_btn = ft.Container(
             content=ft.Icon(ft.Icons.CLOSE_ROUNDED, size=16,
@@ -687,19 +700,15 @@ class VaultGuardApp:
                                color=T.PRIMARY),
                 ], spacing=T.SP_2, tight=True,
                    vertical_alignment=ft.CrossAxisAlignment.CENTER),
-                _muted_text("有可用的新版本，是否前往下载更新？",
+                _muted_text("有可用的新版本，是否下载更新？",
                             size=T.TEXT_12),
+                self._update_progress_text,
                 ft.Row([
                     _default_button("忽略",
                                     on_click=self._safe(
                                         "忽略更新",
                                         lambda e: self._dismiss_update_card())),
-                    _primary_button("立即更新",
-                                    icon=ft.Icons.DOWNLOAD_ROUNDED,
-                                    on_click=self._safe(
-                                        "前往更新",
-                                        lambda e, u=info.html_url:
-                                            self._open_update_page(u))),
+                    self._update_action_btn,
                 ], alignment=ft.MainAxisAlignment.END, spacing=T.SP_2),
             ], spacing=T.SP_3, tight=True),
         )
@@ -729,12 +738,108 @@ class VaultGuardApp:
         except Exception:
             pass
 
-    def _open_update_page(self, url: str) -> None:
-        if self._open_external_url(url):
-            self._dismiss_update_card()
-            self._snack("已在浏览器打开下载页")
-        else:
-            self._snack("打开浏览器失败，请手动访问发布页", error=True)
+    def _start_download_update(self) -> None:
+        """点击「下载更新」：后台线程下载安装包到下载目录，卡片内显示进度。"""
+        info = getattr(self, "_update_info", None)
+        if info is None or self._update_downloading:
+            return
+        self._update_downloading = True
+
+        # 切换按钮为禁用态文案，显示进度行。
+        self._set_update_action("正在下载…", icon=ft.Icons.DOWNLOAD_ROUNDED,
+                                disabled=True)
+        self._set_update_progress("准备下载…")
+
+        def work() -> None:
+            from vaultguard.core import updater
+            dest_dir = str(Path.home() / "Downloads")
+            last = [0.0]
+
+            def on_progress(done: int, total: int) -> None:
+                now = time.monotonic()
+                if now - last[0] < 0.1 and done != total:
+                    return  # 节流，避免高频 UI 刷新
+                last[0] = now
+                if total > 0:
+                    pct = int(done * 100 / total)
+                    txt = f"下载中 {pct}%（{fmt_size(done)} / {fmt_size(total)}）"
+                else:
+                    txt = f"下载中 {fmt_size(done)}"
+                self._run_ui(lambda t=txt: self._set_update_progress(t))
+
+            try:
+                path = updater.download_asset(info, dest_dir, on_progress)
+            except Exception as ex:  # noqa: BLE001
+                self._run_ui(lambda: self._on_download_failed(info))
+                self._record_error("下载更新失败", ex)
+                return
+            self._run_ui(lambda: self._on_download_done(path))
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _on_download_done(self, path: str) -> None:
+        self._update_downloading = False
+        self._set_update_progress(f"已下载到：{path}")
+        # 下载完成后按钮变为「打开所在文件夹」，方便用户手动安装。
+        self._set_update_action(
+            "打开所在文件夹", icon=ft.Icons.FOLDER_OPEN_ROUNDED,
+            on_click=self._safe("打开下载目录",
+                                lambda e, p=path: self._reveal_in_file_manager(p)))
+        self._snack("新版本已下载完成")
+
+    def _on_download_failed(self, info) -> None:
+        self._update_downloading = False
+        self._set_update_progress("下载失败，可前往发布页手动下载")
+        # 失败时退回「前往发布页」兜底。
+        self._set_update_action(
+            "前往发布页", icon=ft.Icons.OPEN_IN_NEW_ROUNDED,
+            on_click=self._safe("前往发布页",
+                                lambda e, u=info.html_url:
+                                    self._open_external_url(u)))
+
+    def _set_update_action(self, text: str, icon=None, on_click=None,
+                           disabled: bool = False) -> None:
+        """原地替换更新卡片的主操作按钮（重建后局部刷新卡片）。"""
+        new_btn = _primary_button(text, icon=icon, on_click=on_click,
+                                  disabled=disabled)
+        old = getattr(self, "_update_action_btn", None)
+        self._update_action_btn = new_btn
+        try:
+            row = old.parent
+            idx = row.controls.index(old)
+            row.controls[idx] = new_btn
+            row.update()
+        except Exception:  # noqa: BLE001
+            try:
+                self.page.update()
+            except Exception:
+                pass
+
+    def _set_update_progress(self, text: str) -> None:
+        t = getattr(self, "_update_progress_text", None)
+        if t is None:
+            return
+        t.value = text
+        t.visible = True
+        try:
+            t.update()
+        except Exception:  # noqa: BLE001
+            pass
+
+    def _reveal_in_file_manager(self, path: str) -> bool:
+        """在系统文件管理器中定位文件（macOS Finder / Windows 资源管理器）。"""
+        import subprocess
+        try:
+            if sys.platform == "darwin":
+                subprocess.Popen(["open", "-R", path])
+                return True
+            if sys.platform.startswith("win"):
+                subprocess.Popen(["explorer", "/select,", path])
+                return True
+            subprocess.Popen(["xdg-open", str(Path(path).parent)])
+            return True
+        except Exception:  # noqa: BLE001
+            return self._open_external_url(str(Path(path).parent))
 
     def _open_external_url(self, url: str) -> bool:
         """跨平台打开外部链接，返回是否成功。

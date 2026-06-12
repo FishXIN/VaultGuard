@@ -11,12 +11,15 @@
 from __future__ import annotations
 
 import json
+import os
+import platform
 import re
 import ssl
+import sys
 import urllib.request
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
-from typing import Optional
+from typing import Callable, Optional
 
 from .. import __version__
 
@@ -25,6 +28,7 @@ _REPO = "FishXIN/VaultGuard"
 _ATOM_FEED = f"https://github.com/{_REPO}/releases.atom"
 _RELEASES_API = f"https://api.github.com/repos/{_REPO}/releases"
 _RELEASES_PAGE = f"https://github.com/{_REPO}/releases/latest"
+_DOWNLOAD_BASE = f"https://github.com/{_REPO}/releases/download"
 _TIMEOUT = 8
 _UA = "VaultGuard-UpdateChecker"
 
@@ -151,3 +155,63 @@ def check_for_update(
         html_url=best.get("html_url") or _RELEASES_PAGE,
         prerelease=bool(best.get("prerelease")),
     )
+
+
+def _current_arch() -> str:
+    """归一化当前 CPU 架构为发布产物使用的 arm64 / x64。"""
+    m = (platform.machine() or "").lower()
+    if m in ("arm64", "aarch64"):
+        return "arm64"
+    return "x64"
+
+
+def asset_url(info: ReleaseInfo) -> tuple[str, str]:
+    """按发布产物命名规范，拼出当前平台安装包的 (下载直链, 文件名)。
+
+    命名规范（见 VaultGuard_GitHub发布策略.md / build 脚本）：
+    - macOS：  VaultGuard-<版本>-<arm64|x64>.zip
+    - Windows：VaultGuard-<版本>-windows-<arm64|x64>.zip
+    """
+    arch = _current_arch()
+    ver = info.version
+    if sys.platform.startswith("win"):
+        name = f"VaultGuard-{ver}-windows-{arch}.zip"
+    else:
+        name = f"VaultGuard-{ver}-{arch}.zip"
+    return f"{_DOWNLOAD_BASE}/{info.tag}/{name}", name
+
+
+def download_asset(
+    info: ReleaseInfo,
+    dest_dir: str,
+    progress: Optional[Callable[[int, int], None]] = None,
+) -> str:
+    """下载当前平台安装包到 dest_dir，返回落地文件的完整路径。
+
+    progress(downloaded_bytes, total_bytes) 回调用于上报进度；
+    total 未知时传 0。下载失败会抛出异常，由调用方处理。
+    """
+    url, name = asset_url(info)
+    os.makedirs(dest_dir, exist_ok=True)
+    dest = os.path.join(dest_dir, name)
+    tmp = dest + ".part"
+
+    req = urllib.request.Request(url, headers={"User-Agent": _UA})
+    ctx = ssl.create_default_context()
+    with urllib.request.urlopen(req, timeout=_TIMEOUT, context=ctx) as resp:
+        total = int(resp.headers.get("Content-Length") or 0)
+        done = 0
+        with open(tmp, "wb") as fh:
+            while True:
+                chunk = resp.read(64 * 1024)
+                if not chunk:
+                    break
+                fh.write(chunk)
+                done += len(chunk)
+                if progress is not None:
+                    try:
+                        progress(done, total)
+                    except Exception:  # noqa: BLE001 进度回调异常不影响下载
+                        pass
+    os.replace(tmp, dest)
+    return dest
