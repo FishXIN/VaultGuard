@@ -165,6 +165,7 @@ class Settings:
     )
     chunk_size: int = 4 * 1024 * 1024     # 大文件分块大小（字节）
     retry_times: int = 2                  # 单文件错误重试次数
+    autostart: bool = False               # 开机自启（登录时自动启动）
     last_source: str = ""                 # 上次使用的源目录（用于自动回填）
     last_target: str = ""                 # 上次使用的目标目录（用于自动回填）
 

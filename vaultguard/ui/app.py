@@ -478,10 +478,11 @@ class VaultGuardApp:
             content=None,
             expand=True,
             # 让右侧页面标题文字上沿与左侧导航文字上沿严格对齐：
-            # 左侧文字上沿 = HEADER_H + 13(导航容器 40px 内文字垂直居中偏移)
-            # 右侧文字上沿 = HEADER_H + padding.top → 取 13
+            # 左侧文字上沿 = HEADER_H + SP_1(侧栏 Column 在拖拽条与首个导航项间的间隙)
+            #               + 13(导航容器 40px 内 14px 文字垂直居中偏移)
+            # 右侧文字上沿 = HEADER_H + padding.top → 取 SP_1 + 13 = 17
             padding=ft.Padding.only(
-                left=T.SP_6, right=T.SP_6, top=13, bottom=T.SP_6),
+                left=T.SP_6, right=T.SP_6, top=T.SP_1 + 13, bottom=T.SP_6),
             bgcolor=T.BG,
         )
 
@@ -1069,16 +1070,12 @@ class VaultGuardApp:
     # ========== 主页 ==========
     def _show_home(self) -> None:
         self._task_stage = "home"
-        self.src_field = self._path_field(
-            "源目录", self.source_path,
-            "请输入或选择路径",
-            self._on_home_path_change(True),
-            suffix=self._picker_btn(True))
-        self.dst_field = self._path_field(
-            "目标目录", self.target_path,
-            "请输入或选择路径",
-            self._on_home_path_change(False),
-            suffix=self._picker_btn(False))
+        self.src_field = self._path_input(
+            self.source_path, "请输入或选择路径",
+            self._on_home_path_change(True))
+        self.dst_field = self._path_input(
+            self.target_path, "请输入或选择路径",
+            self._on_home_path_change(False))
 
         self._compare_btn_holder = ft.Container()
         self._refresh_compare_btn()
@@ -1088,8 +1085,8 @@ class VaultGuardApp:
             ft.Container(height=1, bgcolor=T.BORDER_LIGHT),
             ft.Column([
                 ft.Column([
-                    self.src_field,
-                    self.dst_field,
+                    self._path_group("源目录", self.src_field, True),
+                    self._path_group("目标目录", self.dst_field, False),
                 ], spacing=T.SP_5, tight=True),
                 ft.Container(height=T.SP_3),
                 ft.Row([
@@ -1125,23 +1122,33 @@ class VaultGuardApp:
         except Exception:
             pass
 
-    def _path_field(self, label, value, hint, on_change, suffix=None) -> ft.TextField:
+    def _path_input(self, value, hint, on_change) -> ft.TextField:
+        """纯输入框（无内置 label / suffix），便于与外置按钮对齐。"""
         return ft.TextField(
-            label=label,
             value=value,
             hint_text=hint,
             on_change=on_change,
             expand=True,
-            suffix=suffix,
             border_radius=T.RADIUS,
             border_color=T.BORDER,
             focused_border_color=T.PRIMARY,
             cursor_color=T.PRIMARY,
             text_size=T.TEXT_14,
             content_padding=ft.Padding.symmetric(vertical=8, horizontal=12),
-            # 文字/hint 垂直居中（默认即 CENTER=0），与右侧 icon 对齐。
             text_vertical_align=ft.VerticalAlignment.CENTER,
         )
+
+    def _path_group(self, label, field, is_source: bool) -> ft.Column:
+        """目录分组：外置标题 + （输入框 与 独立选择按钮）等高对齐的一行。"""
+        return ft.Column([
+            ft.Text(label, size=T.TEXT_13, color=T.TEXT_TERTIARY,
+                    font_family=T.FONT_SANS),
+            ft.Row(
+                [field, self._picker_btn(is_source)],
+                spacing=T.SP_2,
+                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            ),
+        ], spacing=T.SP_2, tight=True)
 
     def _picker_btn(self, is_source: bool) -> ft.Container:
         prompt = "选择源目录" if is_source else "选择目标目录"
@@ -1156,7 +1163,7 @@ class VaultGuardApp:
         icon = _nav_svg_icon(_NAV_SVG_FOLDER, T.TEXT_TERTIARY, 18)
         b = ft.Container(
             content=icon,
-            width=28, height=28,
+            width=36, height=36,
             bgcolor=idle_bg,
             border_radius=T.RADIUS,
             alignment=ft.Alignment.CENTER,
@@ -2765,21 +2772,29 @@ class VaultGuardApp:
                 _muted_text(desc, size=T.TEXT_12),
             ], spacing=2, tight=True, expand=True)
 
-        def _divider() -> ft.Container:
-            return ft.Container(height=1, bgcolor=T.BORDER_LIGHT)
-
         def _section_label(title: str) -> ft.Container:
+            # 截图风格：分组标题为加粗黑字，悬于卡片上方，无底色无图标。
             return ft.Container(
                 content=ft.Text(
                     title, size=T.TEXT_14, weight=T.FW_SEMIBOLD,
                     color=T.TEXT_TITLE, font_family=T.FONT_SANS),
-                padding=ft.Padding.only(left=16, right=16, top=18, bottom=10),
-                bgcolor=T.BG,
+                padding=ft.Padding.only(left=2, bottom=8),
             )
+
+        def _hoverable(box: ft.Container) -> ft.Container:
+            # 行级悬停反馈：鼠标移入时填充浅灰，移出恢复原底色。
+            base = box.bgcolor
+
+            def _on_hover(e):
+                e.control.bgcolor = T.FILL_HOVER if e.data == "true" else base
+                e.control.update()
+
+            box.on_hover = _on_hover
+            return box
 
         def _setting_row(title: str, desc: str, control,
                          danger: bool = False) -> ft.Container:
-            return ft.Container(
+            box = ft.Container(
                 content=ft.Row([
                     _setting_title(title, desc),
                     control,
@@ -2789,9 +2804,10 @@ class VaultGuardApp:
                 padding=ft.Padding.symmetric(vertical=14, horizontal=16),
                 bgcolor=T.DANGER_BG if danger else T.BG,
             )
+            return box if danger else _hoverable(box)
 
         def _field_row(title: str, desc: str, field) -> ft.Container:
-            return ft.Container(
+            return _hoverable(ft.Container(
                 content=ft.Row([
                     _setting_title(title, desc),
                     field,
@@ -2800,7 +2816,7 @@ class VaultGuardApp:
                     spacing=T.SP_4),
                 padding=ft.Padding.symmetric(vertical=14, horizontal=16),
                 bgcolor=T.BG,
-            )
+            ))
 
         def _textarea_row(title: str, desc: str, field) -> ft.Container:
             return ft.Container(
@@ -2812,12 +2828,36 @@ class VaultGuardApp:
                 bgcolor=T.BG,
             )
 
-        def _settings_list(*controls) -> ft.Container:
+        def _group_card(*rows) -> ft.Container:
+            # 截图风格：一组设置项收进一张带边框的圆角卡片，行间以浅分隔线相隔。
+            items = [r for r in rows if r is not None]
+            children: list = []
+            for i, row in enumerate(items):
+                if i:
+                    children.append(ft.Container(height=1, bgcolor=T.BORDER_LIGHT))
+                children.append(row)
+            return ft.Container(
+                content=ft.Column(children, spacing=0),
+                border=ft.Border.all(1, T.BORDER),
+                border_radius=T.RADIUS_LG,
+                bgcolor=T.BG,
+                clip_behavior=ft.ClipBehavior.HARD_EDGE,
+            )
+
+        def _section(title: str, *rows) -> ft.Column:
+            # 分组标题 + 卡片，作为设置页的一个区块。
+            return ft.Column([
+                _section_label(title),
+                _group_card(*rows),
+            ], spacing=0, tight=True)
+
+        def _settings_list(*blocks) -> ft.Container:
             return ft.Container(
                 bgcolor=T.BG,
                 expand=True,
+                padding=ft.Padding.only(left=4, right=12, top=4, bottom=8),
                 content=ft.Column(
-                    list(controls), spacing=0,
+                    list(blocks), spacing=T.SP_5,
                     scroll=ft.ScrollMode.AUTO, expand=True),
             )
 
@@ -2840,6 +2880,14 @@ class VaultGuardApp:
             str(s.retry_times),
             width=160, dense=True,
             keyboard_type=ft.KeyboardType.NUMBER)
+
+        from vaultguard.core import autostart
+        self._autostart_supported = autostart.is_supported()
+        self.f_autostart = ft.Switch(
+            value=(autostart.is_enabled() if self._autostart_supported
+                   else s.autostart),
+            active_color=T.PRIMARY,
+            disabled=not self._autostart_supported)
 
         from vaultguard.core.config import default_app_data_dir
         is_default_dir = (
@@ -2875,9 +2923,8 @@ class VaultGuardApp:
                        spacing=T.SP_2,
                        alignment=ft.MainAxisAlignment.END),
             ], spacing=T.SP_3, tight=True),
-            padding=ft.Padding.symmetric(vertical=9, horizontal=12),
-            border_radius=T.RADIUS,
-            bgcolor=T.FILL,
+            padding=ft.Padding.symmetric(vertical=14, horizontal=16),
+            bgcolor=T.BG,
         )
 
         save_btn = _primary_button(
@@ -2891,60 +2938,74 @@ class VaultGuardApp:
             disabled=not has_error_report,
             tooltip=(None if has_error_report else "最近没有报错需要提交"))
 
+        report_row = ft.Container(
+            content=ft.Column([
+                ft.Text(f"异常报告目录：{self.error_reporter.report_dir}",
+                        size=T.TEXT_12,
+                        color=T.TEXT_TERTIARY,
+                        font_family=T.FONT_MONO,
+                        overflow=ft.TextOverflow.ELLIPSIS),
+                ft.Row([report_btn], alignment=ft.MainAxisAlignment.END),
+            ], spacing=T.SP_3, tight=True),
+            padding=ft.Padding.symmetric(vertical=14, horizontal=16),
+            bgcolor=T.BG,
+        )
+
         settings_list = _settings_list(
-            _section_label("对比策略"),
-            _field_row(
-                "mtime 容差",
-                "允许源目录与目标目录的文件时间存在轻微误差，单位为秒。",
-                self.f_tolerance),
-            _divider(),
-            _setting_row(
-                "检测文件容量变化",
-                "容量变化会被视为需要同步，适合增量备份默认开启。",
-                self.f_compare_size),
-            _section_label("文件安全"),
-            _setting_row(
-                "Hash 校验",
-                "复制完成后校验文件内容，速度更慢但可靠性更高。",
-                self.f_verify_hash),
-            _divider(),
-            _field_row(
-                "失败重试次数",
-                "单个文件复制失败后的自动重试次数。",
-                self.f_retry),
-            _section_label("删除策略"),
-            _setting_row(
-                "删除同步",
-                "目标目录中多余文件会随源目录删除，开启前请确认备份策略。",
-                self.f_delete_sync,
-                danger=True),
-            _divider(),
-            _setting_row(
-                "移入回收区",
-                "删除同步时优先移入系统回收区，降低误删风险。",
-                self.f_use_recycle),
-            _section_label("排除规则"),
-            _textarea_row(
-                "忽略文件与目录",
-                "命中的文件或目录不会参与对比与备份。",
-                self.f_exclude),
-            _section_label("错误反馈"),
-            ft.Container(
-                content=data_dir_row,
-                padding=ft.Padding.only(left=16, right=16, top=14),
-                bgcolor=T.BG,
+            _section(
+                "通用",
+                _setting_row(
+                    "开机自启",
+                    ("登录系统后自动在后台启动备份了嘛。"
+                     if self._autostart_supported
+                     else "当前平台暂不支持开机自启。"),
+                    self.f_autostart),
             ),
-            ft.Container(
-                content=ft.Column([
-                    ft.Text(f"异常报告目录：{self.error_reporter.report_dir}",
-                            size=T.TEXT_12,
-                            color=T.TEXT_TERTIARY,
-                            font_family=T.FONT_MONO,
-                            overflow=ft.TextOverflow.ELLIPSIS),
-                    ft.Row([report_btn], alignment=ft.MainAxisAlignment.END),
-                ], spacing=T.SP_3, tight=True),
-                padding=ft.Padding.symmetric(vertical=14, horizontal=16),
-                bgcolor=T.BG,
+            _section(
+                "对比策略",
+                _field_row(
+                    "mtime 容差",
+                    "允许源目录与目标目录的文件时间存在轻微误差，单位为秒。",
+                    self.f_tolerance),
+                _setting_row(
+                    "检测文件容量变化",
+                    "容量变化会被视为需要同步，适合增量备份默认开启。",
+                    self.f_compare_size),
+            ),
+            _section(
+                "文件安全",
+                _setting_row(
+                    "Hash 校验",
+                    "复制完成后校验文件内容，速度更慢但可靠性更高。",
+                    self.f_verify_hash),
+                _field_row(
+                    "失败重试次数",
+                    "单个文件复制失败后的自动重试次数。",
+                    self.f_retry),
+            ),
+            _section(
+                "删除策略",
+                _setting_row(
+                    "删除同步",
+                    "目标目录中多余文件会随源目录删除，开启前请确认备份策略。",
+                    self.f_delete_sync,
+                    danger=True),
+                _setting_row(
+                    "移入回收区",
+                    "删除同步时优先移入系统回收区，降低误删风险。",
+                    self.f_use_recycle),
+            ),
+            _section(
+                "排除规则",
+                _textarea_row(
+                    "忽略文件与目录",
+                    "命中的文件或目录不会参与对比与备份。",
+                    self.f_exclude),
+            ),
+            _section(
+                "数据与反馈",
+                data_dir_row,
+                report_row,
             ),
         )
 
@@ -3208,6 +3269,15 @@ class VaultGuardApp:
         s.use_recycle = self.f_use_recycle.value
         s.exclude_patterns = [p.strip() for p in self.f_exclude.value.splitlines()
                               if p.strip()]
+        if self._autostart_supported:
+            from vaultguard.core import autostart
+            try:
+                autostart.set_enabled(self.f_autostart.value)
+                s.autostart = self.f_autostart.value
+            except Exception as ex:  # noqa: BLE001
+                self.f_autostart.value = autostart.is_enabled()
+                self._handle_error("设置开机自启", ex)
+                return
         try:
             self.svc.save_settings()
             self._snack("设置已保存")
