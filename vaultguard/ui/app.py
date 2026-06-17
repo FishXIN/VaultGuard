@@ -149,6 +149,71 @@ _NAV_SVG_DOCUMENT = (
 )
 
 
+# 对比结果统计图标（assets/Icon 下补充的线性 SVG，随模块自包含）
+_STAT_SVG_NEW = (
+    '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" '
+    'xmlns="http://www.w3.org/2000/svg">'
+    '<path d="M7.99999 13.6C11.0928 13.6 13.6 11.0928 13.6 8.00002C13.6 4.90723 '
+    '11.0928 2.40002 7.99999 2.40002C4.9072 2.40002 2.39999 4.90723 2.39999 '
+    '8.00002C2.39999 11.0928 4.9072 13.6 7.99999 13.6Z" stroke="#0B0B0F"/>'
+    '<path d="M8.00001 5.20001V10.8M5.20001 8.00001H10.8" stroke="#0B0B0F" '
+    'stroke-linecap="round"/>'
+    '</svg>'
+)
+_STAT_SVG_UPDATE = (
+    '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" '
+    'xmlns="http://www.w3.org/2000/svg">'
+    '<path d="M3.39999 7.2C3.55171 6.31607 3.95852 5.49577 4.57036 4.84003C5.1822 '
+    '4.18428 5.97238 3.7217 6.8437 3.50918C7.71501 3.29667 8.62944 3.34349 9.47449 '
+    '3.6439C10.3195 3.9443 11.0583 4.48519 11.6 5.2" stroke="#0B0B0F" '
+    'stroke-linecap="round" stroke-linejoin="round"/>'
+    '<path d="M11.6 2.59998V5.19998H9" stroke="#0B0B0F" stroke-linecap="round" '
+    'stroke-linejoin="round"/>'
+    '<path d="M12.6 8.79999C12.4483 9.68392 12.0415 10.5042 11.4296 11.16C10.8178 '
+    '11.8157 10.0276 12.2783 9.15629 12.4908C8.28498 12.7033 7.37055 12.6565 6.5255 '
+    '12.3561C5.68045 12.0557 4.94165 11.5148 4.39999 10.8" stroke="#0B0B0F" '
+    'stroke-linecap="round" stroke-linejoin="round"/>'
+    '<path d="M4.39999 13.4V10.8H6.99999" stroke="#0B0B0F" stroke-linecap="round" '
+    'stroke-linejoin="round"/>'
+    '</svg>'
+)
+_STAT_SVG_DELETE = (
+    '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" '
+    'xmlns="http://www.w3.org/2000/svg">'
+    '<path d="M3 4.40002H13" stroke="#0B0B0F" stroke-linecap="round"/>'
+    '<path d="M6 4.40001V3.40001C6 3.21436 6.07375 3.03631 6.20503 2.90504C6.3363 '
+    '2.77376 6.51435 2.70001 6.7 2.70001H9.3C9.48565 2.70001 9.6637 2.77376 9.79497 '
+    '2.90504C9.92625 3.03631 10 3.21436 10 3.40001V4.40001" stroke="#0B0B0F" '
+    'stroke-linecap="round" stroke-linejoin="round"/>'
+    '<path d="M4.29999 4.40002L4.89999 12.4C4.92469 12.621 5.03031 12.825 5.19649 '
+    '12.9727C5.36267 13.1204 5.57765 13.2014 5.79999 13.2H10.2C10.4223 13.2014 '
+    '10.6373 13.1204 10.8035 12.9727C10.9697 12.825 11.0753 12.621 11.1 12.4L11.7 '
+    '4.40002" stroke="#0B0B0F" stroke-linecap="round" stroke-linejoin="round"/>'
+    '<path d="M6.60001 6.40002V10.8M9.40001 6.40002V10.8" stroke="#0B0B0F" '
+    'stroke-linecap="round"/>'
+    '</svg>'
+)
+_STAT_SVG_SKIP = (
+    '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" '
+    'xmlns="http://www.w3.org/2000/svg">'
+    '<path d="M4.39999 3.59998L9.99999 7.99998L4.39999 12.4V3.59998Z" '
+    'stroke="#0B0B0F" stroke-linecap="round" stroke-linejoin="round"/>'
+    '<path d="M11.6 3.59998V12.4" stroke="#0B0B0F" stroke-linecap="round"/>'
+    '</svg>'
+)
+_STAT_SVG_TRANSMISSION = (
+    '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" '
+    'xmlns="http://www.w3.org/2000/svg">'
+    '<path d="M3 5H11" stroke="#0B0B0F" stroke-linecap="round"/>'
+    '<path d="M9 3L11.3 5L9 7" stroke="#0B0B0F" stroke-linecap="round" '
+    'stroke-linejoin="round"/>'
+    '<path d="M12.8 11H4.79999" stroke="#0B0B0F" stroke-linecap="round"/>'
+    '<path d="M6.8 9L4.5 11L6.8 13" stroke="#0B0B0F" stroke-linecap="round" '
+    'stroke-linejoin="round"/>'
+    '</svg>'
+)
+
+
 def _nav_svg_icon(svg: str, color: str, size: int = 18) -> "ft.Image":
     """把内联 SVG 渲染为指定颜色的图标（SRC_IN 将描边整体着色）。"""
     return ft.Image(
@@ -206,7 +271,7 @@ def _primary_button(text: str, icon=None, on_click=None,
     """主按钮：实心蓝（规范 §5.1 .vg-btn--primary）。
 
     无上浮、无 glow、无 scale；hover 仅变背景色。
-    禁用态：灰底、不可点击，hover 显示 tooltip 提示。
+    禁用态：灰底、不可点击，hover 显示 tooltip 提示原因。
     """
     children = []
     if icon is not None:
@@ -298,6 +363,27 @@ def _default_button(text: str, icon=None, on_click=None,
     if not disabled:
         btn.on_hover = _hover
     return btn
+
+
+def _switch(value: bool = False, active_color: str = T.PRIMARY,
+            on_change=None) -> ft.Switch:
+    """轻量开关：去掉 Material 默认的大号灰色 hover/splash 光晕，
+    收紧 thumb 体积，贴合 Arco 黑灰极简风（规范 §5）。"""
+    return ft.Switch(
+        value=value,
+        on_change=on_change,
+        active_color=ft.Colors.WHITE,
+        active_track_color=active_color,
+        inactive_thumb_color=ft.Colors.WHITE,
+        inactive_track_color=T.TEXT_DISABLED,
+        track_outline_color=ft.Colors.TRANSPARENT,
+        track_outline_width=0,
+        overlay_color=ft.Colors.TRANSPARENT,
+        splash_radius=0,
+        hover_color=ft.Colors.TRANSPARENT,
+        focus_color=ft.Colors.TRANSPARENT,
+        scale=0.85,
+    )
 
 
 def _card(*controls, padding: int = T.SP_5,
@@ -419,6 +505,9 @@ class VaultGuardApp:
     def _setup_page(self) -> None:
         p = self.page
         p.title = "备份了嘛"
+        # 启动时按持久化设置应用主题调色板（在任何控件构建前生效）。
+        self._dark = (self.svc.settings.theme == "dark")
+        T.apply_theme(self._dark)
         p.bgcolor = T.BG
         # 注册随包打入的思源黑体（Noto Sans SC 可变字体），让 macOS / Windows
         # 字形与字重完全一致。注册失败（找不到字体文件）时回退系统字体。
@@ -428,7 +517,8 @@ class VaultGuardApp:
             font_family = T.FONT_FAMILY_NAME
         else:
             font_family = "-apple-system" if _IS_MACOS else None
-        p.theme_mode = ft.ThemeMode.LIGHT
+        self._font_family = font_family
+        p.theme_mode = ft.ThemeMode.DARK if self._dark else ft.ThemeMode.LIGHT
         p.theme = ft.Theme(
             color_scheme_seed=T.PRIMARY,
             font_family=font_family,
@@ -478,21 +568,32 @@ class VaultGuardApp:
             content=None,
             expand=True,
             # 让右侧页面标题文字上沿与左侧导航文字上沿严格对齐：
-            # 左侧文字上沿 = HEADER_H + SP_1(侧栏 Column 在拖拽条与首个导航项间的间隙)
-            #               + 13(导航容器 40px 内 14px 文字垂直居中偏移)
-            # 右侧文字上沿 = HEADER_H + padding.top → 取 SP_1 + 13 = 17
+            # 左侧文字上沿 = HEADER_H + 13(导航容器 40px 内文字垂直居中偏移)
+            # 右侧文字上沿 = HEADER_H + padding.top → 取 13
             padding=ft.Padding.only(
-                left=T.SP_6, right=T.SP_6, top=T.SP_1 + 13, bottom=T.SP_6),
+                left=T.SP_6, right=T.SP_6, top=13, bottom=T.SP_6),
             bgcolor=T.BG,
         )
 
         self.page.add(
             ft.Row(
                 [sidebar,
-                 # 右侧工作区顶部留出等高拖拽条，与侧栏顶栏对齐
+                 # 右侧工作区顶部留出等高拖拽条，与侧栏顶栏对齐；
+                 # 右端嵌入主题切换滑块（不可拖拽，紧贴右上角）。
                  ft.Column(
-                     [ft.WindowDragArea(
-                         ft.Container(height=T.HEADER_H, bgcolor=T.BG)),
+                     [ft.Container(
+                         height=T.HEADER_H,
+                         bgcolor=T.BG,
+                         content=ft.Row(
+                             [ft.WindowDragArea(
+                                 ft.Container(height=T.HEADER_H),
+                                 expand=True),
+                              self._build_theme_toggle(),
+                              ft.Container(width=T.SP_4)],
+                             spacing=0,
+                             vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                         ),
+                      ),
                       self.content],
                      expand=True,
                      spacing=0,
@@ -501,6 +602,65 @@ class VaultGuardApp:
                 spacing=0,
             )
         )
+
+    def _build_theme_toggle(self) -> ft.Container:
+        """顶栏右上角的暗色模式滑块：圆角轨道 + 滑钮 + 日/月图标。
+
+        暗色时滑钮滑到右侧并显示月亮，浅色时在左侧显示太阳。点击切换主题。
+        """
+        dark = self._dark
+        knob = ft.Container(
+            width=18, height=18, border_radius=9,
+            bgcolor=T.BG,
+            alignment=ft.Alignment.CENTER,
+            content=ft.Icon(
+                ft.Icons.DARK_MODE_ROUNDED if dark else ft.Icons.LIGHT_MODE_ROUNDED,
+                size=12, color=T.TEXT_PRIMARY),
+            shadow=T.shadow_sm(),
+        )
+        track = ft.Container(
+            width=44, height=24, border_radius=12,
+            bgcolor=T.PRIMARY_BG,
+            padding=3,
+            alignment=ft.Alignment.CENTER_RIGHT if dark else ft.Alignment.CENTER_LEFT,
+            content=knob,
+            tooltip="切换浅色模式" if dark else "切换暗色模式",
+            on_click=self._safe("切换主题", lambda e: self._toggle_theme()),
+            ink=False,
+        )
+        return track
+
+    def _toggle_theme(self) -> None:
+        """切换浅色 / 暗色：改写调色板、持久化、重建并重绘界面。"""
+        self._dark = not self._dark
+        T.apply_theme(self._dark)
+        self.svc.settings.theme = "dark" if self._dark else "light"
+        try:
+            self.svc.save_settings()
+        except Exception:  # noqa: BLE001 持久化失败不应阻断主题切换
+            pass
+
+        p = self.page
+        p.bgcolor = T.BG
+        p.theme_mode = ft.ThemeMode.DARK if self._dark else ft.ThemeMode.LIGHT
+        p.theme = ft.Theme(
+            color_scheme_seed=T.PRIMARY,
+            font_family=self._font_family,
+            visual_density=ft.VisualDensity.COMFORTABLE,
+        )
+
+        # 已构建的控件颜色不会自动更新，需丢弃旧控件树并按当前页面重建。
+        idx = self._nav_index
+        p.controls.clear()
+        self._build_layout()
+        if idx == 1:
+            self._show_history()
+        elif idx == 2:
+            self._show_settings()
+        else:
+            self._task_content = None
+            self._reset_task_home()
+        p.update()
 
     def _make_nav_item(self, idx: int, icon, label: str) -> ft.Container:
         active = idx == self._nav_index
@@ -543,7 +703,7 @@ class VaultGuardApp:
                 row.controls[0].color = fg
                 row.controls[1].color = fg
                 c.bgcolor = (
-                    "#C9CDD4" if active_now and hovering
+                    T.FILL_ACTIVE if active_now and hovering
                     else T.PRIMARY_BG if active_now
                     else T.FILL_HOVER if hovering
                     else None
@@ -1158,7 +1318,7 @@ class VaultGuardApp:
         # 不使用 animate / 不切尺寸，避免 suffix 重布局造成的卡顿。
         idle_bg = T.FILL_HOVER          # #F2F3F5
         hover_bg = T.PRIMARY_BG         # #E5E6EB
-        active_bg = "#C9CDD4"           # 与左侧导航 hover-active 同色
+        active_bg = T.FILL_ACTIVE       # 与左侧导航 hover-active 同色
 
         icon = _nav_svg_icon(_NAV_SVG_FOLDER, T.TEXT_TERTIARY, 18)
         b = ft.Container(
@@ -1440,7 +1600,7 @@ class VaultGuardApp:
         def stat_cell(value_ctrl, label, color, icon):
             return ft.Container(
                 content=ft.Column([
-                    ft.Row([ft.Icon(icon, color=color, size=16), value_ctrl],
+                    ft.Row([_nav_svg_icon(icon, color, 16), value_ctrl],
                            spacing=T.SP_2, tight=True,
                            alignment=ft.MainAxisAlignment.CENTER),
                     _muted_text(label, size=T.TEXT_12),
@@ -1490,22 +1650,22 @@ class VaultGuardApp:
             _card(
                 ft.Row([
                     stat_cell(self._cf_stat_new, "新增", T.SUCCESS,
-                              ft.Icons.ADD_CIRCLE_OUTLINE_ROUNDED),
+                              _STAT_SVG_NEW),
                     vline(),
                     stat_cell(self._cf_stat_upd, "更新", T.WARNING,
-                              ft.Icons.AUTORENEW_ROUNDED),
+                              _STAT_SVG_UPDATE),
                     vline(),
                     stat_cell(self._cf_stat_del, "删除", T.DANGER,
-                              ft.Icons.DELETE_OUTLINE_ROUNDED),
+                              _STAT_SVG_DELETE),
                     vline(),
                     stat_cell(ft.Text(str(diff.skipped_count), size=T.TEXT_28,
                                       weight=T.FW_MEDIUM, color=T.TEXT_TERTIARY,
                                       font_family=T.FONT_MONO),
                               "跳过", T.TEXT_TERTIARY,
-                              ft.Icons.SKIP_NEXT_ROUNDED),
+                              _STAT_SVG_SKIP),
                     vline(),
                     stat_cell(self._cf_stat_bytes, "预计传输", T.PRIMARY,
-                              ft.Icons.UPLOAD_OUTLINED),
+                              _STAT_SVG_TRANSMISSION),
                 ], vertical_alignment=ft.CrossAxisAlignment.CENTER),
             ),
             ft.Container(
@@ -2236,15 +2396,6 @@ class VaultGuardApp:
             ], spacing=T.SP_5))
             return
 
-        kind_map = {
-            "completed": "success",
-            "failed": "danger",
-            "paused": "warning",
-            "running": "running",
-            "cancelled": "warning",
-        }
-        status_col_w = 108
-
         def cell(control, *, width: Optional[int] = None,
                  expand: Optional[int] = None,
                  align=ft.Alignment.CENTER_LEFT) -> ft.Container:
@@ -2309,19 +2460,38 @@ class VaultGuardApp:
                 tooltip = f"共 {total} 个文件\n" + "\n".join(tip_lines)
             else:
                 tooltip = "暂无文件变更"
-            return ft.Container(
-                content=ft.Row(bars, spacing=0, expand=True),
+            track = ft.Container(
+                content=ft.Row(bars, spacing=0),
                 height=6,
                 bgcolor=T.BORDER_LIGHT,
                 border_radius=T.RADIUS_SM,
                 clip_behavior=ft.ClipBehavior.HARD_EDGE,
-                tooltip=tooltip,
-                expand=True,
+                expand=3,
+            )
+            # 进度条仅 6px 高，直接 hover 难以命中：外层用整行高度的容器承载
+            # tooltip。进度条本身只占单元格约 3/5 宽（不必铺满），再以 expand 让它
+            # 随窗口宽度实时伸缩；尾部 spacer 占满剩余宽度，使整格仍可 hover。
+            # 关键：bgcolor 必须为「不透明」色（与行背景同色，视觉无感）。完全透明
+            # (#00000000) 会被 Flutter 跳过绘制，导致进度条之外的区域无法命中、hover
+            # 失效——这是此前 tooltip 不弹出的根因。
+            return ft.Container(
+                content=ft.Row(
+                    [track, ft.Container(expand=2)],
+                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                    spacing=0,
+                ),
+                height=40,
+                bgcolor=T.BG,
+                tooltip=ft.Tooltip(
+                    message=tooltip,
+                    padding=ft.Padding.symmetric(horizontal=10, vertical=8),
+                    wait_duration=ft.Duration(milliseconds=200),
+                    bgcolor=T.TEXT_PRIMARY,
+                    text_style=ft.TextStyle(color="#FFFFFF", size=T.TEXT_12),
+                ),
             )
 
         def table_row(t: dict, *, last: bool = False) -> ft.Container:
-            kind = kind_map.get(t["status"], "running")
-            status_label = _task_status_label(t["status"])
             finish_ts = t["end_time"] or None
             finish_text = (
                 fmt_relative_time(finish_ts)
@@ -2345,18 +2515,19 @@ class VaultGuardApp:
                     pass
 
             detail_btn.on_hover = _detail_hover
+            status_cell = ft.Container(
+                content=history_status_bar(t),
+                expand=5,
+                padding=ft.Padding.symmetric(horizontal=T.SP_3, vertical=0),
+            )
             return ft.Container(
                 content=ft.Row([
-                    cell(_mono_text(f"#{t['id']}", size=T.TEXT_13,
-                                    color=T.TEXT_TITLE), width=70),
-                    cell(_badge(status_label, kind), width=status_col_w,
-                         align=ft.Alignment.CENTER),
-                    cell(history_status_bar(t), expand=3),
+                    status_cell,
                     cell(ft.Text(finish_text, size=T.TEXT_13,
                                  color=T.TEXT_PRIMARY,
                                  overflow=ft.TextOverflow.ELLIPSIS),
-                         expand=2),
-                    cell(detail_btn, width=70, align=ft.Alignment.CENTER),
+                         expand=3, align=ft.Alignment.CENTER_RIGHT),
+                    cell(detail_btn, expand=2, align=ft.Alignment.CENTER),
                 ], spacing=0, expand=True,
                    vertical_alignment=ft.CrossAxisAlignment.CENTER),
                 height=58,
@@ -2366,11 +2537,9 @@ class VaultGuardApp:
 
         table_header = ft.Container(
             content=ft.Row([
-                head("ID", width=70),
-                head("任务", width=status_col_w),
-                head("状态", expand=3),
-                head("结束时间", expand=2),
-                head("详情", width=70, align=ft.Alignment.CENTER),
+                head("状态", expand=5),
+                head("结束时间", expand=3, align=ft.Alignment.CENTER_RIGHT),
+                head("详情", expand=2, align=ft.Alignment.CENTER),
             ], spacing=0, expand=True,
                vertical_alignment=ft.CrossAxisAlignment.CENTER),
             height=42,
@@ -2772,8 +2941,10 @@ class VaultGuardApp:
                 _muted_text(desc, size=T.TEXT_12),
             ], spacing=2, tight=True, expand=True)
 
+        def _divider() -> ft.Container:
+            return ft.Container(height=1, bgcolor=T.BORDER_LIGHT)
+
         def _section_label(title: str) -> ft.Container:
-            # 截图风格：分组标题为加粗黑字，悬于卡片上方，无底色无图标。
             return ft.Container(
                 content=ft.Text(
                     title, size=T.TEXT_14, weight=T.FW_SEMIBOLD,
@@ -2781,20 +2952,9 @@ class VaultGuardApp:
                 padding=ft.Padding.only(left=2, bottom=8),
             )
 
-        def _hoverable(box: ft.Container) -> ft.Container:
-            # 行级悬停反馈：鼠标移入时填充浅灰，移出恢复原底色。
-            base = box.bgcolor
-
-            def _on_hover(e):
-                e.control.bgcolor = T.FILL_HOVER if e.data == "true" else base
-                e.control.update()
-
-            box.on_hover = _on_hover
-            return box
-
         def _setting_row(title: str, desc: str, control,
                          danger: bool = False) -> ft.Container:
-            box = ft.Container(
+            return ft.Container(
                 content=ft.Row([
                     _setting_title(title, desc),
                     control,
@@ -2804,10 +2964,9 @@ class VaultGuardApp:
                 padding=ft.Padding.symmetric(vertical=14, horizontal=16),
                 bgcolor=T.DANGER_BG if danger else T.BG,
             )
-            return box if danger else _hoverable(box)
 
         def _field_row(title: str, desc: str, field) -> ft.Container:
-            return _hoverable(ft.Container(
+            return ft.Container(
                 content=ft.Row([
                     _setting_title(title, desc),
                     field,
@@ -2816,7 +2975,7 @@ class VaultGuardApp:
                     spacing=T.SP_4),
                 padding=ft.Padding.symmetric(vertical=14, horizontal=16),
                 bgcolor=T.BG,
-            ))
+            )
 
         def _textarea_row(title: str, desc: str, field) -> ft.Container:
             return ft.Container(
@@ -2829,23 +2988,23 @@ class VaultGuardApp:
             )
 
         def _group_card(*rows) -> ft.Container:
-            # 截图风格：一组设置项收进一张带边框的圆角卡片，行间以浅分隔线相隔。
+            # 一组设置项收进一张带边框的圆角卡片，行间用浅分隔线相隔；
+            # 用 ANTI_ALIAS 裁剪让子行底色不溢出圆角，同时保持四周边框连通。
             items = [r for r in rows if r is not None]
             children: list = []
             for i, row in enumerate(items):
                 if i:
-                    children.append(ft.Container(height=1, bgcolor=T.BORDER_LIGHT))
+                    children.append(_divider())
                 children.append(row)
             return ft.Container(
                 content=ft.Column(children, spacing=0),
                 border=ft.Border.all(1, T.BORDER),
-                border_radius=T.RADIUS_LG,
+                border_radius=T.RADIUS_MD,
                 bgcolor=T.BG,
-                clip_behavior=ft.ClipBehavior.HARD_EDGE,
+                clip_behavior=ft.ClipBehavior.ANTI_ALIAS,
             )
 
         def _section(title: str, *rows) -> ft.Column:
-            # 分组标题 + 卡片，作为设置页的一个区块。
             return ft.Column([
                 _section_label(title),
                 _group_card(*rows),
@@ -2855,7 +3014,7 @@ class VaultGuardApp:
             return ft.Container(
                 bgcolor=T.BG,
                 expand=True,
-                padding=ft.Padding.only(left=4, right=12, top=4, bottom=8),
+                padding=ft.Padding.only(right=12, bottom=8),
                 content=ft.Column(
                     list(blocks), spacing=T.SP_5,
                     scroll=ft.ScrollMode.AUTO, expand=True),
@@ -2865,13 +3024,13 @@ class VaultGuardApp:
             str(s.mtime_tolerance),
             width=160, dense=True,
             keyboard_type=ft.KeyboardType.NUMBER)
-        self.f_compare_size = ft.Switch(
+        self.f_compare_size = _switch(
             value=s.compare_size, active_color=T.PRIMARY)
-        self.f_verify_hash = ft.Switch(
+        self.f_verify_hash = _switch(
             value=s.verify_hash, active_color=T.PRIMARY)
-        self.f_delete_sync = ft.Switch(
+        self.f_delete_sync = _switch(
             value=s.delete_sync, active_color=T.DANGER)
-        self.f_use_recycle = ft.Switch(
+        self.f_use_recycle = _switch(
             value=s.use_recycle, active_color=T.PRIMARY)
         self.f_exclude = _tf(
             "\n".join(s.exclude_patterns),
@@ -2883,7 +3042,7 @@ class VaultGuardApp:
 
         from vaultguard.core import autostart
         self._autostart_supported = autostart.is_supported()
-        self.f_autostart = ft.Switch(
+        self.f_autostart = _switch(
             value=(autostart.is_enabled() if self._autostart_supported
                    else s.autostart),
             active_color=T.PRIMARY,
@@ -3003,7 +3162,7 @@ class VaultGuardApp:
                     self.f_exclude),
             ),
             _section(
-                "数据与反馈",
+                "错误反馈",
                 data_dir_row,
                 report_row,
             ),

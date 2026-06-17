@@ -168,6 +168,7 @@ class Settings:
     autostart: bool = False               # 开机自启（登录时自动启动）
     last_source: str = ""                 # 上次使用的源目录（用于自动回填）
     last_target: str = ""                 # 上次使用的目标目录（用于自动回填）
+    theme: str = "light"                  # 界面主题："light" 浅色 / "dark" 暗色
 
     def to_dict(self) -> dict:
         return asdict(self)

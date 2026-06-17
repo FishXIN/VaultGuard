@@ -12,33 +12,52 @@ from .runtime import ft
 
 
 # ============ 1. 颜色 ============
-# 1.1 主色（唯一强调色，纯黑——黑灰序极简风）
-PRIMARY = "#1D2129"
-PRIMARY_HOVER = "#4E5969"
-PRIMARY_ACTIVE = "#000000"
-PRIMARY_BG = "#E5E6EB"  # 浅灰底：选中行、轻量标签
+# 颜色支持浅色 / 深色双主题：下方两套调色板在运行时由 apply_theme() 切换。
+# 由于桌面端所有控件在构建时直接读取 T.PRIMARY 等模块常量，切换主题时需
+# 先调用 apply_theme() 改写这些全局常量，再重建界面，新配色即整体生效。
+#
+#   1.1 主色（唯一强调色）：浅色为近黑、深色反相为近白，使实心主按钮在两种
+#       主题下都保持「填充强调色 + BG 反差文字」的对比关系。
+#   1.2 中性色（文本 / 边框 / 填充 / 背景）。
+#   1.3 状态色（备份语义，低饱和），深色下背景变体改为深色微着色。
+_LIGHT = dict(
+    PRIMARY="#1D2129", PRIMARY_HOVER="#4E5969", PRIMARY_ACTIVE="#000000",
+    PRIMARY_BG="#E5E6EB",  # 浅灰底：选中行、轻量标签
+    TEXT_TITLE="#1D2129", TEXT_PRIMARY="#4E5969", TEXT_TERTIARY="#86909C",
+    TEXT_DISABLED="#C9CDD4",
+    BORDER="#E5E6EB", BORDER_LIGHT="#F2F3F5",
+    FILL="#F7F8FA", FILL_HOVER="#F2F3F5", FILL_ACTIVE="#C9CDD4",
+    BG="#FFFFFF",
+    SUCCESS="#00B42A", SUCCESS_BG="#E8FFEA",
+    WARNING="#FF7D00", WARNING_BG="#FFF7E8",
+    DANGER="#F53F3F", DANGER_BG="#FFECE8",
+    RUNNING="#4E5969", RUNNING_BG="#E5E6EB",
+)
+_DARK = dict(
+    PRIMARY="#E8EAED", PRIMARY_HOVER="#C9CDD4", PRIMARY_ACTIVE="#FFFFFF",
+    PRIMARY_BG="#2E2E33",
+    TEXT_TITLE="#F7F8FA", TEXT_PRIMARY="#C9CDD4", TEXT_TERTIARY="#86909C",
+    TEXT_DISABLED="#4E5969",
+    BORDER="#333338", BORDER_LIGHT="#2A2A2E",
+    FILL="#232326", FILL_HOVER="#2A2A2E", FILL_ACTIVE="#3A3A40",
+    BG="#17171A",
+    SUCCESS="#23C343", SUCCESS_BG="#1B3326",
+    WARNING="#FF9A2E", WARNING_BG="#332512",
+    DANGER="#F76965", DANGER_BG="#3A1E1E",
+    RUNNING="#C9CDD4", RUNNING_BG="#2E2E33",
+)
 
-# 1.2 中性色（主体）
-TEXT_TITLE = "#1D2129"
-TEXT_PRIMARY = "#4E5969"
-TEXT_TERTIARY = "#86909C"
-TEXT_DISABLED = "#C9CDD4"
 
-BORDER = "#E5E6EB"
-BORDER_LIGHT = "#F2F3F5"
-FILL = "#F7F8FA"
-FILL_HOVER = "#F2F3F5"
-BG = "#FFFFFF"
+def apply_theme(dark: bool) -> None:
+    """切换调色板：改写本模块的颜色全局常量。
 
-# 1.3 状态色（备份语义，低饱和）
-SUCCESS = "#00B42A"
-SUCCESS_BG = "#E8FFEA"
-WARNING = "#FF7D00"
-WARNING_BG = "#FFF7E8"
-DANGER = "#F53F3F"
-DANGER_BG = "#FFECE8"
-RUNNING = "#4E5969"
-RUNNING_BG = "#E5E6EB"
+    必须在重建界面（重新构建控件树）之前调用，已构建的控件不会自动变色。
+    """
+    globals().update(_DARK if dark else _LIGHT)
+
+
+# 默认浅色：导入即生效，保证 from . import tokens as T 后各颜色常量可用。
+apply_theme(False)
 
 
 # ============ 2. 字体 ============
