@@ -1,0 +1,42 @@
+name: Feature Request
+description: Suggest a user-facing improvement for VaultGuard
+title: "[Feature] "
+labels:
+  - type: feature
+  - priority: p2
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Describe the problem first, then the proposed solution.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem Statement
+      description: What is not working well today?
+      placeholder: I want VaultGuard to...
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed Solution
+      placeholder: The app could add...
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives Considered
+      placeholder: Other approaches you considered
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - UI
+        - Core Backup
+        - Update / Release
+        - Windows
+        - macOS
+        - Other

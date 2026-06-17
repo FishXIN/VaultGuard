@@ -1,8 +1,25 @@
 # VaultGuard · 本地硬盘增量备份
 
+[![Release](https://img.shields.io/github/v/release/FishXIN/VaultGuard?display_name=tag)](https://github.com/FishXIN/VaultGuard/releases)
+[![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows-1f2328)](https://github.com/FishXIN/VaultGuard/releases)
+[![Tests](https://img.shields.io/badge/tests-7%20passed-2ea043)](https://github.com/FishXIN/VaultGuard)
+
 以「文件安全」为最高优先级的本地硬盘增量备份工具（Windows / macOS）。提供原生桌面应用体验。
 
 通过对比文件修改时间识别需备份文件，**先选清单、确认后再执行**，已备份且未变更的文件自动跳过；支持断点续传，全程可视化进度与完整日志。
+
+## 发布与更新
+
+- 最新版本与安装包：见 [Releases](https://github.com/FishXIN/VaultGuard/releases)
+- 版本变更记录：见 [CHANGELOG.md](./CHANGELOG.md)
+- 问题反馈与需求建议：见 [Issues](https://github.com/FishXIN/VaultGuard/issues)
+
+当前采用较规范的 GitHub 发布治理：
+
+- 使用语义化版本号：`v主版本.次版本.修订版本`
+- Release Notes 按类别组织：新增、修复、UI、打包、文档
+- Issue / PR 使用标签治理，便于筛选功能、缺陷、优先级和发布归属
+- 默认只在明确发布时创建新版本，不把日常源码同步误当成 Release
 
 ## 核心特性
 

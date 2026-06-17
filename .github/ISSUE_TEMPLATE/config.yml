@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: VaultGuard Releases
+    url: https://github.com/FishXIN/VaultGuard/releases
+    about: Check the latest stable release and changelog before filing an issue.

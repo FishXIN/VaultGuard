@@ -366,12 +366,13 @@ def _default_button(text: str, icon=None, on_click=None,
 
 
 def _switch(value: bool = False, active_color: str = T.PRIMARY,
-            on_change=None) -> ft.Switch:
+            on_change=None, disabled: bool = False) -> ft.Switch:
     """轻量开关：去掉 Material 默认的大号灰色 hover/splash 光晕，
     收紧 thumb 体积，贴合 Arco 黑灰极简风（规范 §5）。"""
     return ft.Switch(
         value=value,
         on_change=on_change,
+        disabled=disabled,
         active_color=ft.Colors.WHITE,
         active_track_color=active_color,
         inactive_thumb_color=ft.Colors.WHITE,

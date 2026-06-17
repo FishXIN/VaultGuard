@@ -1,0 +1,34 @@
+changelog:
+  exclude:
+    labels:
+      - ignore-for-release
+      - duplicate
+      - invalid
+      - question
+      - wontfix
+  categories:
+    - title: 🚀 Features
+      labels:
+        - type: feature
+        - type: enhancement
+    - title: 🐞 Fixes
+      labels:
+        - type: bug
+        - bug
+    - title: 🎨 UI / UX
+      labels:
+        - type: ui
+    - title: 📦 Packaging / Release
+      labels:
+        - type: packaging
+        - type: release
+        - build
+        - ci
+    - title: 📚 Docs
+      labels:
+        - type: docs
+        - documentation
+    - title: 🧹 Chore
+      labels:
+        - type: chore
+
