@@ -6,6 +6,11 @@ The format is based on Keep a Changelog, with a pragmatic structure tailored for
 
 ## [Unreleased]
 
+## [1.2.7] - 2026-06-18
+
+### Fixed
+- Backup progress rendering now uses integer `expand` values to avoid Flet frame update failures during transfer progress refresh.
+
 ## [1.2.6] - 2026-06-18
 
 ### Added

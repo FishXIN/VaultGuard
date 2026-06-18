@@ -529,7 +529,6 @@ class VaultGuardApp:
         self._latest_copy_prog: Optional[CopyProgress] = None
         self._copy_refreshing = False
         self._history_refreshing = False
-        self._last_log_file = ""
 
         self._update_card: Optional[ft.Control] = None
 
@@ -2336,12 +2335,15 @@ class VaultGuardApp:
         if prog is None:
             return
         pct = (prog.transferred_bytes / prog.total_bytes) if prog.total_bytes else 1.0
-        # 纯色填充，靠父 Row 的 expand 比例近似真实 width 推进
+        # 纯色填充，靠父 Row 的 expand 比例近似真实 width 推进。
+        # expand 必须为 int（Flet 校验会拒绝 float 并使整帧更新失败），
+        # 故用千分比整数表达比例。
         if pct < 1.0:
-            spacer_expand = max(1.0 - pct, 0.001)
+            fill_expand = max(int(pct * 1000), 1)
+            spacer_expand = max(1000 - fill_expand, 1)
             self.pb_track.content = ft.Row([
                 ft.Container(bgcolor=T.PRIMARY, height=6,
-                             expand=max(pct, 0.001),
+                             expand=fill_expand,
                              border_radius=T.RADIUS_SM),
                 ft.Container(expand=spacer_expand),
             ], spacing=0)
