@@ -374,10 +374,12 @@ class _LiteSwitch(ft.Container):
     _TRACK_H = 18
     _THUMB = 14
 
-    def __init__(self, value: bool = False, active_color: str = T.PRIMARY,
+    def __init__(self, value: bool = False, active_color: Optional[str] = None,
                  on_change=None, disabled: bool = False):
         self._value = bool(value)
-        self._active_color = active_color
+        # active_color 不在默认参数里写死 T.PRIMARY：默认参数在导入时求值，会把
+        # 浅色调色板的值永久固化，切换暗色后失效。这里在调用时解析。
+        self._active_color = active_color if active_color is not None else T.PRIMARY
         self._on_change = on_change
         pad = (self._TRACK_H - self._THUMB) // 2
         self._thumb = ft.Container(
@@ -417,7 +419,7 @@ class _LiteSwitch(ft.Container):
         self._sync()
 
 
-def _switch(value: bool = False, active_color: str = T.PRIMARY,
+def _switch(value: bool = False, active_color: Optional[str] = None,
             on_change=None, disabled: bool = False) -> "_LiteSwitch":
     return _LiteSwitch(value=value, active_color=active_color,
                        on_change=on_change, disabled=disabled)
@@ -467,9 +469,13 @@ def _detail_summary_chip(icon, color: str, label: str, count: int) -> ft.Contain
 
 
 def _mono_text(text: str, size: int = T.TEXT_13,
-               color: str = T.TEXT_PRIMARY) -> ft.Text:
+               color: Optional[str] = None) -> ft.Text:
     """数据/容量/速率展示（规范 §2 推荐 mono 字体）。"""
-    return ft.Text(text, size=size, color=color, font_family=T.FONT_MONO)
+    # color 默认值不写死 T.TEXT_PRIMARY：默认参数在导入时求值会固化浅色，
+    # 切换暗色后失效。这里在调用时解析。
+    return ft.Text(text, size=size,
+                   color=color if color is not None else T.TEXT_PRIMARY,
+                   font_family=T.FONT_MONO)
 
 
 def _progress_track(height: int = 12, width: int = 640) -> ft.Container:
@@ -696,6 +702,14 @@ class VaultGuardApp:
             self._show_settings()
         else:
             self._rebuild_task_stage()
+
+        # page.overlay 中的悬浮更新卡片不在控件树内，需单独按新主题重建；
+        # 下载进行中不重建，避免打断进度与按钮状态。
+        if getattr(self, "_update_card", None) is not None \
+                and not getattr(self, "_update_downloading", False) \
+                and getattr(self, "_update_info", None) is not None:
+            self._show_update_card(self._update_info)
+
         p.update()
 
     def _rebuild_task_stage(self) -> None:
@@ -1609,11 +1623,12 @@ class VaultGuardApp:
 
         if prog.phase == "scanning":
             elapsed = max(time.monotonic() - self._compare_started_at, 0.0)
-            scan_pct = max(0.0, min(prog.progress_ratio, 1.0))
-            _set_progress_value(self.cmp_pb_track, scan_pct)
-            self.cmp_pct.value = f"统计 {scan_pct * 100:.0f}%"
-            self.cmp_stat.value = f"已统计 {prog.processed_files} 个文件"
-            self.cmp_eta.value = f"用时 {fmt_eta(elapsed)} · 剩余估算中"
+            # 扫描阶段尚未拿到总文件数，无法给出真实百分比；此处只展示真实已发现
+            # 文件数，避免把估算值伪装成 “98%” 之类的确定进度。
+            _set_progress_value(self.cmp_pb_track, 0.0)
+            self.cmp_pct.value = "扫描中"
+            self.cmp_stat.value = f"已发现 {prog.processed_files} 个文件"
+            self.cmp_eta.value = f"用时 {fmt_eta(elapsed)} · 正在统计总量"
         else:
             compare_pct = prog.progress_ratio if prog.progress_ratio else pct
             _set_progress_value(self.cmp_pb_track, compare_pct)

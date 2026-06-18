@@ -6,6 +6,11 @@ The format is based on Keep a Changelog, with a pragmatic structure tailored for
 
 ## [Unreleased]
 
+## [1.2.8] - 2026-06-18
+
+### Fixed
+- Compare progress no longer shows estimated scanning percentages as if they were real progress; scanning now displays honest file discovery status, and only the actual compare phase shows a true percentage.
+
 ## [1.2.7] - 2026-06-18
 
 ### Fixed
