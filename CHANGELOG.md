@@ -6,11 +6,18 @@ The format is based on Keep a Changelog, with a pragmatic structure tailored for
 
 ## [Unreleased]
 
+## [1.2.6] - 2026-06-18
+
+### Added
+- In-app update now supports one-click restart installation for packaged desktop builds on macOS and Windows.
+
 ### Changed
-- Repository governance: release notes, issue templates, PR template, and label taxonomy.
+- Theme switching now rebuilds the current task stage without dropping compare, confirm, backup, or result state.
+- History rows now show source and target path flow together with status for quicker scanning.
+- Main window default size is increased to provide a more stable desktop layout.
 
 ### Fixed
-- Settings switches now correctly respect the disabled state for unsupported options such as system autostart.
+- Restart-based self update now closes the old window more reliably before relaunching the new build.
 
 ## [1.2.5] - 2026-06-17
 
@@ -22,9 +29,11 @@ The format is based on Keep a Changelog, with a pragmatic structure tailored for
 - Settings page grouped into cleaner cards.
 - History status presentation refined for quicker scanning.
 - Release governance upgraded to clearer categories and labels.
+- Repository governance: release notes, issue templates, PR template, and label taxonomy.
 
 ### Fixed
 - Update download asset resolution is more robust against naming differences.
+- Settings switches now correctly respect the disabled state for unsupported options such as system autostart.
 
 ## [1.2.4] - 2026-06-15
 

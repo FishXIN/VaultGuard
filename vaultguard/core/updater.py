@@ -297,3 +297,151 @@ def download_asset(
                         pass
     os.replace(tmp, dest)
     return dest
+
+
+def can_self_install() -> bool:
+    """当前运行形态是否支持「下载后原地替换并重启」。
+
+    仅打包后的桌面应用（PyInstaller frozen）才有确定的安装位置可替换；
+    源码 / 开发态没有可替换的 bundle，返回 False，由调用方退回手动方式。
+    """
+    if not getattr(sys, "frozen", False):
+        return False
+    try:
+        return _install_target() is not None
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _install_target() -> Optional[str]:
+    """推导当前应用应被替换的根路径。
+
+    - macOS：承载本进程的 .app bundle（exe 上溯三级，形如 .../备份了嘛.app）。
+    - Windows / Linux：可执行文件所在目录（onedir 形态的整包目录）。
+    无法确定时返回 None。
+    """
+    exe = Path(sys.executable).resolve()
+    if sys.platform == "darwin":
+        bundle = exe.parents[2] if len(exe.parents) >= 3 else None
+        if bundle is not None and bundle.suffix == ".app" and bundle.is_dir():
+            return str(bundle)
+        return None
+    parent = exe.parent
+    return str(parent) if parent.is_dir() else None
+
+
+def install_update(zip_path: str) -> bool:
+    """以脱离主进程的方式安装已下载的新版本压缩包，并在替换后重启应用。
+
+    流程（在独立子进程脚本中执行，确保本进程退出后才动手）：
+    1. 等待当前进程（pid）退出，释放对自身文件的占用；
+    2. 解压新包到临时目录；
+    3. 删除旧的应用并把新应用移动到原位置；
+    4. 重新拉起新应用。
+
+    成功派生安装脚本返回 True（调用方应随即退出本进程）；
+    不支持自安装（如开发态）或派生失败返回 False。
+    """
+    if not can_self_install():
+        return False
+    target = _install_target()
+    if not target or not os.path.isfile(zip_path):
+        return False
+    pid = os.getpid()
+    try:
+        if sys.platform == "darwin":
+            return _spawn_installer_macos(zip_path, target, pid)
+        if sys.platform.startswith("win"):
+            return _spawn_installer_windows(zip_path, target, pid)
+        return False
+    except Exception:  # noqa: BLE001 派生失败则退回手动方式
+        return False
+
+
+def _spawn_installer_macos(zip_path: str, bundle: str, pid: int) -> bool:
+    import subprocess
+    import tempfile
+
+    script = f"""#!/bin/sh
+ZIP={_sh_quote(zip_path)}
+BUNDLE={_sh_quote(bundle)}
+PID={pid}
+# 1) 等旧进程退出，释放对自身 bundle 的占用
+i=0
+while /bin/kill -0 "$PID" 2>/dev/null; do
+  /bin/sleep 0.2
+  i=$((i+1))
+  [ "$i" -gt 150 ] && break
+done
+STAGING=$(/usr/bin/mktemp -d /tmp/vaultguard_update.XXXXXX) || exit 1
+# 2) 解压新包（产物顶层即 .app）
+/usr/bin/ditto -x -k "$ZIP" "$STAGING" 2>/dev/null || /usr/bin/unzip -oq "$ZIP" -d "$STAGING"
+NEW_APP=$(/bin/ls -d "$STAGING"/*.app 2>/dev/null | /usr/bin/head -1)
+if [ -d "$NEW_APP" ]; then
+  # 3) 删除旧 app，移入新 app
+  /bin/rm -rf "$BUNDLE"
+  /bin/mv "$NEW_APP" "$BUNDLE"
+  /usr/bin/xattr -dr com.apple.quarantine "$BUNDLE" 2>/dev/null || true
+  # 4) 重新拉起
+  /usr/bin/open -n "$BUNDLE"
+fi
+/bin/rm -rf "$STAGING"
+/bin/rm -f "$ZIP"
+"""
+    fd, path = tempfile.mkstemp(suffix=".sh", prefix="vaultguard_update_")
+    with os.fdopen(fd, "w") as fh:
+        fh.write(script)
+    os.chmod(path, 0o755)
+    subprocess.Popen(
+        ["/bin/sh", path],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        stdin=subprocess.DEVNULL,
+        start_new_session=True,
+    )
+    return True
+
+
+def _spawn_installer_windows(zip_path: str, app_dir: str, pid: int) -> bool:
+    import subprocess
+    import tempfile
+
+    exe = os.path.join(app_dir, "VaultGuard.exe")
+    script = f"""@echo off
+setlocal
+set "ZIP={zip_path}"
+set "APPDIR={app_dir}"
+set "EXE={exe}"
+set "PID={pid}"
+:waitloop
+tasklist /FI "PID eq %PID%" 2>NUL | find "%PID%" >NUL
+if not errorlevel 1 (
+  timeout /t 1 /nobreak >NUL
+  goto waitloop
+)
+set "STAGING=%TEMP%\\vaultguard_update_%PID%"
+rmdir /S /Q "%STAGING%" 2>NUL
+powershell -NoProfile -Command "Expand-Archive -LiteralPath '%ZIP%' -DestinationPath '%STAGING%' -Force"
+robocopy "%STAGING%" "%APPDIR%" /MIR /NFL /NDL /NJH /NJS /NP >NUL
+rmdir /S /Q "%STAGING%" 2>NUL
+del /F /Q "%ZIP%" 2>NUL
+start "" "%EXE%"
+del /F /Q "%~f0" 2>NUL
+"""
+    fd, path = tempfile.mkstemp(suffix=".bat", prefix="vaultguard_update_")
+    with os.fdopen(fd, "w") as fh:
+        fh.write(script)
+    subprocess.Popen(
+        ["cmd", "/c", path],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        stdin=subprocess.DEVNULL,
+        creationflags=getattr(subprocess, "DETACHED_PROCESS", 0)
+        | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0),
+    )
+    return True
+
+
+def _sh_quote(s: str) -> str:
+    import shlex
+    return shlex.quote(s)

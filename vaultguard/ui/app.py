@@ -365,26 +365,62 @@ def _default_button(text: str, icon=None, on_click=None,
     return btn
 
 
+class _LiteSwitch(ft.Container):
+    """轻量自绘开关：相比 Material Switch 更矮，且 thumb 圆点在切换时
+    尺寸恒定（Material 默认会放大选中态 thumb），贴合 Arco 黑灰极简风
+    （规范 §5）。对外暴露与 ft.Switch 一致的 value / disabled / on_change。"""
+
+    _TRACK_W = 34
+    _TRACK_H = 18
+    _THUMB = 14
+
+    def __init__(self, value: bool = False, active_color: str = T.PRIMARY,
+                 on_change=None, disabled: bool = False):
+        self._value = bool(value)
+        self._active_color = active_color
+        self._on_change = on_change
+        pad = (self._TRACK_H - self._THUMB) // 2
+        self._thumb = ft.Container(
+            width=self._THUMB, height=self._THUMB,
+            border_radius=self._THUMB / 2, bgcolor=ft.Colors.WHITE)
+        super().__init__(
+            width=self._TRACK_W, height=self._TRACK_H,
+            border_radius=self._TRACK_H / 2,
+            padding=ft.Padding.symmetric(horizontal=pad, vertical=0),
+            content=self._thumb,
+            on_click=self._toggle,
+            disabled=disabled,
+            animate=ft.Animation(140, ft.AnimationCurve.EASE_OUT),
+            animate_align=ft.Animation(140, ft.AnimationCurve.EASE_OUT),
+        )
+        self._sync()
+
+    def _sync(self) -> None:
+        self.bgcolor = self._active_color if self._value else T.TEXT_DISABLED
+        self.alignment = (ft.Alignment.CENTER_RIGHT if self._value
+                          else ft.Alignment.CENTER_LEFT)
+
+    def _toggle(self, e) -> None:
+        self._value = not self._value
+        self._sync()
+        self.update()
+        if self._on_change:
+            self._on_change(e)
+
+    @property
+    def value(self) -> bool:
+        return self._value
+
+    @value.setter
+    def value(self, v: bool) -> None:
+        self._value = bool(v)
+        self._sync()
+
+
 def _switch(value: bool = False, active_color: str = T.PRIMARY,
-            on_change=None, disabled: bool = False) -> ft.Switch:
-    """轻量开关：去掉 Material 默认的大号灰色 hover/splash 光晕，
-    收紧 thumb 体积，贴合 Arco 黑灰极简风（规范 §5）。"""
-    return ft.Switch(
-        value=value,
-        on_change=on_change,
-        disabled=disabled,
-        active_color=ft.Colors.WHITE,
-        active_track_color=active_color,
-        inactive_thumb_color=ft.Colors.WHITE,
-        inactive_track_color=T.TEXT_DISABLED,
-        track_outline_color=ft.Colors.TRANSPARENT,
-        track_outline_width=0,
-        overlay_color=ft.Colors.TRANSPARENT,
-        splash_radius=0,
-        hover_color=ft.Colors.TRANSPARENT,
-        focus_color=ft.Colors.TRANSPARENT,
-        scale=0.85,
-    )
+            on_change=None, disabled: bool = False) -> "_LiteSwitch":
+    return _LiteSwitch(value=value, active_color=active_color,
+                       on_change=on_change, disabled=disabled)
 
 
 def _card(*controls, padding: int = T.SP_5,
@@ -525,8 +561,8 @@ class VaultGuardApp:
             font_family=font_family,
             visual_density=ft.VisualDensity.COMFORTABLE,
         )
-        p.window.width = 920
-        p.window.height = 600
+        p.window.width = 1024
+        p.window.height = 712
         p.window.min_width = 720
         p.window.min_height = 480
         # 仅 macOS 隐藏原生标题栏，让侧边栏延伸到窗口顶部、交通灯按钮悬浮其上
@@ -650,7 +686,8 @@ class VaultGuardApp:
             visual_density=ft.VisualDensity.COMFORTABLE,
         )
 
-        # 已构建的控件颜色不会自动更新，需丢弃旧控件树并按当前页面重建。
+        # 已构建的控件颜色不会自动更新，需丢弃旧控件树并重建当前界面，
+        # 同时保留正在进行的操作状态（对比 / 备份 / 确认清单 / 结果）。
         idx = self._nav_index
         p.controls.clear()
         self._build_layout()
@@ -659,9 +696,27 @@ class VaultGuardApp:
         elif idx == 2:
             self._show_settings()
         else:
-            self._task_content = None
-            self._reset_task_home()
+            self._rebuild_task_stage()
         p.update()
+
+    def _rebuild_task_stage(self) -> None:
+        """按当前任务阶段重建任务页，保留进行中的操作与状态。
+
+        对比 / 备份阶段仅重建视图骨架，后台线程不受影响，refresher 会在下一帧
+        把实时进度重新刷上；确认 / 结果阶段从已保存的状态重建。
+        """
+        stage = self._task_stage
+        if stage == "comparing":
+            self._build_compare_view()
+        elif stage == "confirm" and getattr(self, "_cf_diff", None) is not None:
+            self._build_confirm_view()
+        elif stage == "backup":
+            self._build_backup_view()
+        elif stage == "result" and getattr(self, "_result_prog", None) is not None:
+            self._build_result_view()
+        else:
+            # home 或状态缺失：回到任务首页（保留已填写的源/目标路径）
+            self._show_home()
 
     def _make_nav_item(self, idx: int, icon, label: str) -> ft.Container:
         active = idx == self._nav_index
@@ -957,13 +1012,55 @@ class VaultGuardApp:
 
     def _on_download_done(self, path: str) -> None:
         self._update_downloading = False
-        self._set_update_progress(f"已下载到：{path}")
-        # 下载完成后按钮变为「打开所在文件夹」，方便用户手动安装。
-        self._set_update_action(
-            "打开所在文件夹", icon=ft.Icons.FOLDER_OPEN_ROUNDED,
-            on_click=self._safe("打开下载目录",
-                                lambda e, p=path: self._reveal_in_file_manager(p)))
-        self._snack("新版本已下载完成")
+        self._update_downloaded_path = path
+        from vaultguard.core import updater
+        if updater.can_self_install():
+            # 支持原地替换：下载完成后只需点一次「立即重启更新」即可完成升级。
+            self._set_update_progress("已下载完成，点击「立即重启更新」即可升级")
+            self._set_update_action(
+                "立即重启更新", icon=ft.Icons.RESTART_ALT_ROUNDED,
+                on_click=self._safe("立即重启更新",
+                                    lambda e, p=path: self._install_and_restart(p)))
+            self._snack("新版本已下载，点击重启即可升级")
+        else:
+            # 开发态等无法自安装：退回手动打开所在文件夹。
+            self._set_update_progress(f"已下载到：{path}")
+            self._set_update_action(
+                "打开所在文件夹", icon=ft.Icons.FOLDER_OPEN_ROUNDED,
+                on_click=self._safe("打开下载目录",
+                                    lambda e, p=path: self._reveal_in_file_manager(p)))
+            self._snack("新版本已下载完成")
+
+    def _install_and_restart(self, path: str) -> None:
+        """点击「立即重启更新」：派生脱离进程的安装脚本并退出本进程。
+
+        安装脚本会等待本进程退出后解压新包、替换旧应用并重新拉起，
+        用户全程只需点击一次重启即可体验新版本。
+        """
+        import os
+        from vaultguard.core import updater
+        self._set_update_action("正在重启更新…",
+                                icon=ft.Icons.RESTART_ALT_ROUNDED,
+                                disabled=True)
+        self._set_update_progress("正在替换并重启，请稍候…")
+        try:
+            ok = updater.install_update(path)
+        except Exception as ex:  # noqa: BLE001
+            self._record_error("安装更新失败", ex)
+            ok = False
+        if not ok:
+            # 派生失败则退回手动方式，避免用户卡在无效态。
+            self._set_update_progress(f"自动更新失败，请手动安装：{path}")
+            self._set_update_action(
+                "打开所在文件夹", icon=ft.Icons.FOLDER_OPEN_ROUNDED,
+                on_click=self._safe("打开下载目录",
+                                    lambda e, p=path: self._reveal_in_file_manager(p)))
+            return
+        try:
+            self.page.window.close()
+        except Exception:  # noqa: BLE001
+            pass
+        os._exit(0)
 
     def _on_download_failed(self, info, reason: str = "") -> None:
         self._update_downloading = False
@@ -1426,6 +1523,45 @@ class VaultGuardApp:
     def _run_compare(self, src: str, dst: str) -> None:
         self._task_stage = "comparing"
         self._compare_started_at = time.monotonic()
+        self._build_compare_view()
+
+        def progress_cb(prog: CompareProgress):
+            # 仅写入最新快照，绝不在采集线程触碰 UI / page.update()
+            self._latest_compare_prog = prog
+
+        async def refresher():
+            # 刷新协程跑在 page 的事件循环上：page.update() 在 loop 线程内执行，
+            # put_nowait 能正常唤醒发送队列消费者，从而真正 flush 到客户端。
+            # 固定 ~15fps 节流，避免高频更新冲垮 UI 管线。
+            while self._compare_refreshing:
+                self._render_compare_snapshot()
+                await asyncio.sleep(1 / 15)
+            # 退出前补最后一帧，确保最终状态落地
+            self._render_compare_snapshot()
+
+        def work():
+            self._latest_compare_prog = None
+            self._compare_refreshing = True
+            # 在事件循环上启动刷新协程（关键：不能用裸线程，否则 update 不 flush）
+            self._start_refresher(refresher, "对比进度刷新")
+            try:
+                diff = self.svc.compare(src, dst, progress_cb=progress_cb)
+                self.current_diff = diff
+                self._compare_refreshing = False
+                self._run_ui(lambda: self._show_confirm(src, dst, diff))
+            except Exception as ex:
+                self._compare_refreshing = False
+                self._handle_error("对比失败", ex)
+                self._run_ui(self._show_home)
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _build_compare_view(self) -> None:
+        """构建（或在切换主题后重建）对比进行中视图的控件骨架。
+
+        仅创建控件并挂载，不触碰后台对比线程；已有进度由 refresher 持续重绘，
+        因此重建后下一帧即恢复实时数据。
+        """
         self.cmp_pb_track = _progress_track(height=10)
         _set_progress_value(self.cmp_pb_track, 0)
         self.cmp_pct = ft.Text(
@@ -1462,37 +1598,6 @@ class VaultGuardApp:
                 padding=T.SP_8,
             ),
         ], spacing=T.SP_5))
-
-        def progress_cb(prog: CompareProgress):
-            # 仅写入最新快照，绝不在采集线程触碰 UI / page.update()
-            self._latest_compare_prog = prog
-
-        async def refresher():
-            # 刷新协程跑在 page 的事件循环上：page.update() 在 loop 线程内执行，
-            # put_nowait 能正常唤醒发送队列消费者，从而真正 flush 到客户端。
-            # 固定 ~15fps 节流，避免高频更新冲垮 UI 管线。
-            while self._compare_refreshing:
-                self._render_compare_snapshot()
-                await asyncio.sleep(1 / 15)
-            # 退出前补最后一帧，确保最终状态落地
-            self._render_compare_snapshot()
-
-        def work():
-            self._latest_compare_prog = None
-            self._compare_refreshing = True
-            # 在事件循环上启动刷新协程（关键：不能用裸线程，否则 update 不 flush）
-            self._start_refresher(refresher, "对比进度刷新")
-            try:
-                diff = self.svc.compare(src, dst, progress_cb=progress_cb)
-                self.current_diff = diff
-                self._compare_refreshing = False
-                self._run_ui(lambda: self._show_confirm(src, dst, diff))
-            except Exception as ex:
-                self._compare_refreshing = False
-                self._handle_error("对比失败", ex)
-                self._run_ui(self._show_home)
-
-        threading.Thread(target=work, daemon=True).start()
 
     def _render_compare_snapshot(self) -> None:
         if self._task_stage != "comparing":
@@ -1583,7 +1688,16 @@ class VaultGuardApp:
         self._cf_anim_prefix: Optional[str] = None
         # 收集本轮渲染中需要播放入场动画的行，渲染完成后由独立线程错位激活
         self._cf_anim_rows: list = []
+        self._build_confirm_view()
 
+    def _build_confirm_view(self) -> None:
+        """构建（或在切换主题后重建）确认页视图。
+
+        读取 self._cf_* 现有状态（勾选集合、排序、展开集合等），因此重建后
+        用户已有的勾选与排序不会丢失。
+        """
+        diff = self._cf_diff
+        src, dst = self._cf_src, self._cf_dst
         # 顶部统计值随勾选动态更新
         self._cf_stat_new = ft.Text(
             str(diff.new_count), size=T.TEXT_28, weight=T.FW_MEDIUM,
@@ -2109,6 +2223,15 @@ class VaultGuardApp:
     # ========== 任务进行页 ==========
     def _show_progress_view(self) -> None:
         self._task_stage = "backup"
+        self._build_backup_view()
+
+    def _build_backup_view(self) -> None:
+        """构建（或在切换主题后重建）备份进行中视图的控件骨架。
+
+        重建时保留已有日志条目与暂停按钮状态，且不触碰后台备份线程——
+        进度由 refresher 持续重绘，下一帧即恢复实时数据。
+        """
+        paused = bool(self.executor and self.executor.is_paused)
         # 纯色进度条：track + fill，靠真实 width 推进，不做装饰动画
         self.pb_track = ft.Container(
             bgcolor=T.FILL,
@@ -2134,11 +2257,10 @@ class VaultGuardApp:
             overflow=ft.TextOverflow.ELLIPSIS, font_family=T.FONT_MONO)
         self.lbl_stat = ft.Text("", size=T.TEXT_13, color=T.TEXT_PRIMARY)
         self.lbl_speed = _mono_text("", size=T.TEXT_13, color=T.TEXT_TERTIARY)
-        self.log_view = ft.ListView([], spacing=2, expand=True,
-                                    padding=T.SP_3, auto_scroll=True)
 
         self.btn_pause = _default_button(
-            "暂停", icon=ft.Icons.PAUSE_ROUNDED,
+            "继续" if paused else "暂停",
+            icon=ft.Icons.PLAY_ARROW_ROUNDED if paused else ft.Icons.PAUSE_ROUNDED,
             on_click=self._safe("暂停/继续", lambda e: self._toggle_pause()))
         self.btn_cancel = _default_button(
             "中断", icon=ft.Icons.STOP_ROUNDED,
@@ -2168,15 +2290,6 @@ class VaultGuardApp:
                     self.lbl_file,
                 ], spacing=T.SP_2),
             ),
-            _section_title("实时日志"),
-            ft.Container(
-                content=self.log_view,
-                bgcolor=T.FILL,
-                border_radius=T.RADIUS_MD,
-                border=ft.Border.all(1, T.BORDER),
-                padding=T.SP_2,
-                expand=True,
-            ),
         ], spacing=T.SP_5, expand=True))
 
     def _start_execution(self, src: str, dst: str, resume: bool) -> None:
@@ -2197,7 +2310,6 @@ class VaultGuardApp:
 
         def work():
             self._latest_copy_prog = None
-            self._last_log_file = ""
             self._copy_refreshing = True
             self._start_refresher(refresher, "备份进度刷新")
             try:
@@ -2251,13 +2363,6 @@ class VaultGuardApp:
             f"{fmt_size(prog.speed_bps)}/s · 剩余 {fmt_eta(prog.eta_seconds)}")
         self.lbl_file.value = prog.current_file or "..."
 
-        if prog.current_file and prog.current_file != self._last_log_file:
-            self._last_log_file = prog.current_file
-            self.log_view.controls.append(
-                ft.Text(f"✓ {prog.current_file}", size=T.TEXT_12,
-                        color=T.TEXT_PRIMARY, font_family=T.FONT_MONO))
-            if len(self.log_view.controls) > 1000:
-                self.log_view.controls.pop(0)
         try:
             self.page.update()
         except Exception:
@@ -2295,6 +2400,12 @@ class VaultGuardApp:
 
     def _show_result(self, prog: CopyProgress) -> None:
         self._task_stage = "result"
+        self._result_prog = prog
+        self._build_result_view()
+
+    def _build_result_view(self) -> None:
+        """构建（或在切换主题后重建）备份结果视图。"""
+        prog = self._result_prog
         success = prog.finished and prog.failed == 0
         if success:
             kind, color, bg, icon = ("success", T.SUCCESS, T.SUCCESS_BG,
@@ -2492,6 +2603,43 @@ class VaultGuardApp:
                 ),
             )
 
+        def path_flow(t: dict) -> ft.Container:
+            src = t["source_path"] or ""
+            dst = t["target_path"] or ""
+            src_name = Path(src).name or src or "--"
+            dst_name = Path(dst).name or dst or "--"
+
+            def _seg(name: str) -> ft.Container:
+                return ft.Container(
+                    content=ft.Text(name, size=T.TEXT_12, color=T.TEXT_PRIMARY,
+                                    overflow=ft.TextOverflow.ELLIPSIS,
+                                    max_lines=1),
+                    expand=1,
+                )
+
+            return ft.Container(
+                content=ft.Row([
+                    ft.Container(
+                        content=_nav_svg_icon(_NAV_SVG_DOCUMENT,
+                                              T.TEXT_TERTIARY, 13),
+                        width=13, height=13,
+                        alignment=ft.Alignment.CENTER),
+                    _seg(src_name),
+                    ft.Icon(ft.Icons.ARROW_FORWARD_ROUNDED,
+                            size=13, color=T.TEXT_TERTIARY),
+                    _seg(dst_name),
+                ], spacing=T.SP_1,
+                   vertical_alignment=ft.CrossAxisAlignment.CENTER),
+                height=18,
+                tooltip=ft.Tooltip(
+                    message=f"源目录：{src or '--'}\n目标目录：{dst or '--'}",
+                    padding=ft.Padding.symmetric(horizontal=10, vertical=8),
+                    wait_duration=ft.Duration(milliseconds=200),
+                    bgcolor=T.TEXT_PRIMARY,
+                    text_style=ft.TextStyle(color="#FFFFFF", size=T.TEXT_12),
+                ),
+            )
+
         def table_row(t: dict, *, last: bool = False) -> ft.Container:
             finish_ts = t["end_time"] or None
             finish_text = (
@@ -2517,7 +2665,11 @@ class VaultGuardApp:
 
             detail_btn.on_hover = _detail_hover
             status_cell = ft.Container(
-                content=history_status_bar(t),
+                content=ft.Column([
+                    path_flow(t),
+                    history_status_bar(t),
+                ], spacing=2, tight=True,
+                   alignment=ft.MainAxisAlignment.CENTER),
                 expand=5,
                 padding=ft.Padding.symmetric(horizontal=T.SP_3, vertical=0),
             )
@@ -2531,14 +2683,14 @@ class VaultGuardApp:
                     cell(detail_btn, expand=2, align=ft.Alignment.CENTER),
                 ], spacing=0, expand=True,
                    vertical_alignment=ft.CrossAxisAlignment.CENTER),
-                height=58,
+                height=66,
                 border=None if last else ft.Border(
                     bottom=ft.BorderSide(1, T.BORDER)),
             )
 
         table_header = ft.Container(
             content=ft.Row([
-                head("状态", expand=5),
+                head("路径 / 状态", expand=5),
                 head("结束时间", expand=3, align=ft.Alignment.CENTER_RIGHT),
                 head("详情", expand=2, align=ft.Alignment.CENTER),
             ], spacing=0, expand=True,
@@ -3409,10 +3561,25 @@ class VaultGuardApp:
             self._handle_error("拉起新进程", ex)
             return
 
+        # 本应用是「Python 宿主进程 + 独立 GUI 窗口客户端」双进程模型：
+        # window.close() 只是给客户端发的一条关闭请求，需经 socket 传输。
+        # 此前紧接着 os._exit(0)，宿主会在该命令真正送达客户端前就被杀掉，
+        # 导致旧窗口残留、而 open -n 又拉起了新窗口（用户所见的「开了两个」）。
+        # 这里改用 destroy() 强制销毁（绕过 prevent_close），并显式 flush +
+        # 短暂等待，确保关闭指令送达客户端后再退出宿主。
+        import time
         try:
-            self.page.window.close()
+            self.page.window.destroy()
+        except Exception:
+            try:
+                self.page.window.close()
+            except Exception:
+                pass
+        try:
+            self.page.update()
         except Exception:
             pass
+        time.sleep(0.4)
         os._exit(0)
 
     def _save_settings(self) -> None:
