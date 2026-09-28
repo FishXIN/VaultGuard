@@ -3721,7 +3721,50 @@ class VaultGuardApp:
             self._handle_error("保存设置", ex)
 
 
+# #region debug-point A:runtime-reporter
+def _debug_report_runtime(hypothesis_id: str, msg: str, data: dict) -> None:
+    try:
+        import json
+        import os
+        import time
+        import urllib.request
+
+        env_path = ".dbg/windows-runtime-error.env"
+        url = "http://192.168.3.51:7778/event"
+        session_id = "windows-runtime-error"
+        if os.path.isfile(env_path):
+            with open(env_path, encoding="utf-8") as env_file:
+                env = dict(
+                    line.split("=", 1)
+                    for line in env_file.read().splitlines()
+                    if "=" in line
+                )
+            url = env.get("DEBUG_SERVER_URL", url)
+            session_id = env.get("DEBUG_SESSION_ID", session_id)
+        payload = {
+            "sessionId": session_id,
+            "runId": os.environ.get("VAULTGUARD_DEBUG_RUN", "pre-fix"),
+            "hypothesisId": hypothesis_id,
+            "location": "vaultguard/ui/app.py:startup",
+            "msg": f"[DEBUG] {msg}",
+            "data": data,
+            "ts": int(time.time() * 1000),
+        }
+        request = urllib.request.Request(
+            url,
+            data=json.dumps(payload).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+        )
+        urllib.request.urlopen(request, timeout=0.5).read()
+    except Exception:
+        pass
+# #endregion
+
+
 def main(page: ft.Page) -> None:
+    # #region debug-point E:main-entry
+    _debug_report_runtime("E", "main page entered", {})
+    # #endregion
     VaultGuardApp(page)
 
 
@@ -3729,6 +3772,20 @@ def run() -> None:
     """纯桌面软件：始终使用原生窗口运行。"""
     import os
     import sys
+
+    # #region debug-point A:flet-api
+    _debug_report_runtime(
+        "A",
+        "flet launcher API",
+        {
+            "flet_file": getattr(ft, "__file__", None),
+            "flet_version": getattr(ft, "__version__", None),
+            "has_app": hasattr(ft, "app"),
+            "has_run": hasattr(ft, "run"),
+            "frozen": bool(getattr(sys, "frozen", False)),
+        },
+    )
+    # #endregion
 
     # 子进程模式：仅弹出原生目录选择器后退出，不启动主窗口。
     # 该子进程的 main bundle 即 VaultGuard.app（已声明中文本地化），系统
@@ -3747,6 +3804,20 @@ def run() -> None:
         if os.path.isdir(client_dir):
             os.environ[VIEW_PATH_ENV] = client_dir
 
+    # #region debug-point D:client-resolution
+    _debug_report_runtime(
+        "D",
+        "desktop client resolved",
+        {
+            "client_path": os.environ.get(VIEW_PATH_ENV),
+            "client_exists": os.path.isdir(os.environ.get(VIEW_PATH_ENV, "")),
+        },
+    )
+    # #endregion
+
+    # #region debug-point B:legacy-launcher
+    _debug_report_runtime("B", "calling ft.app", {"has_app": hasattr(ft, "app")})
+    # #endregion
     ft.app(target=main)
 
 
