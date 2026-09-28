@@ -38,6 +38,10 @@ class _CopyControl(Exception):
     pass
 
 
+class TaskAlreadyRunningError(RuntimeError):
+    pass
+
+
 def _hash_file(path: str | Path, chunk_size: int = 4 * 1024 * 1024) -> str:
     """计算文件 hash（优先 xxHash，回退 SHA-256）。"""
     if _HAS_XXHASH:
@@ -52,6 +56,9 @@ def _hash_file(path: str | Path, chunk_size: int = 4 * 1024 * 1024) -> str:
 
 class BackupExecutor:
     """执行一次备份任务，支持暂停/取消/续传与实时进度回调。"""
+
+    _active_task_ids: set[int] = set()
+    _active_task_lock = threading.Lock()
 
     def __init__(self, db: Database, settings: Settings) -> None:
         self.db = db
@@ -408,7 +415,35 @@ class BackupExecutor:
         progress_cb: Optional[Callable[[CopyProgress], None]] = None,
         health_cb: Optional[Callable[[list[DiskHealth]], None]] = None,
     ) -> CopyProgress:
-        """执行任务。resume=True 时只处理 done=0 的项（断点续传）。"""
+        """执行任务，并确保同一 task_id 在当前进程内只有一个执行器。"""
+        with self._active_task_lock:
+            if task_id in self._active_task_ids:
+                raise TaskAlreadyRunningError(f"任务 #{task_id} 已在执行")
+            self._active_task_ids.add(task_id)
+
+        try:
+            return self._run_claimed(
+                task_id,
+                source,
+                target,
+                resume=resume,
+                progress_cb=progress_cb,
+                health_cb=health_cb,
+            )
+        finally:
+            with self._active_task_lock:
+                self._active_task_ids.discard(task_id)
+
+    def _run_claimed(
+        self,
+        task_id: int,
+        source: str | Path,
+        target: str | Path,
+        resume: bool = False,
+        progress_cb: Optional[Callable[[CopyProgress], None]] = None,
+        health_cb: Optional[Callable[[list[DiskHealth]], None]] = None,
+    ) -> CopyProgress:
+        """已获得任务执行权后的实际备份流程。"""
         source = Path(source)
         target = Path(target)
         self._cancel_event.clear()

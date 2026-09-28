@@ -13,7 +13,11 @@ from vaultguard.core import disk_health
 from vaultguard.core.config import Settings
 from vaultguard.core.database import Database
 from vaultguard.core.disk_health import DiskHealth, check_disk_health
-from vaultguard.core.executor import BackupExecutor, cleanup_temp_files
+from vaultguard.core.executor import (
+    BackupExecutor,
+    TaskAlreadyRunningError,
+    cleanup_temp_files,
+)
 from vaultguard.core.models import Action, DiffItem, DiffResult, TaskStatus
 from vaultguard.core.scanner import compare, scan_directory
 from vaultguard.core.service import BackupService
@@ -420,6 +424,96 @@ def test_rescue_mode_never_deletes_target_files():
     print("PASS test_rescue_mode_never_deletes_target_files")
 
 
+def test_duplicate_task_execution_is_rejected():
+    """同一 task_id 并发启动时只允许一个执行器进入业务流程。"""
+    d = tempfile.mkdtemp()
+    src, dst, data = Path(d)/"s", Path(d)/"t", Path(d)/"data"
+    setup_tree(src, {"a.txt": "a"})
+    svc = BackupService(data)
+    diff = svc.compare(str(src), str(dst))
+    tid = svc.create_task(str(src), str(dst), diff)
+    first_entered = threading.Event()
+    release_first = threading.Event()
+    original = BackupExecutor._run_claimed
+
+    def blocked_run(executor, *args, **kwargs):
+        first_entered.set()
+        release_first.wait(3)
+        return original(executor, *args, **kwargs)
+
+    reports = [
+        DiskHealth("source", str(src), "healthy", smart_status="Verified"),
+        DiskHealth("target", str(dst), "healthy", smart_status="Verified"),
+    ]
+    first = svc.make_executor()
+    second = svc.make_executor()
+    result = []
+    with patch.object(BackupExecutor, "_run_claimed", blocked_run), \
+            patch("vaultguard.core.executor.check_backup_disks",
+                  return_value=reports):
+        thread = threading.Thread(
+            target=lambda: result.append(
+                first.run(tid, str(src), str(dst), resume=True)))
+        thread.start()
+        assert first_entered.wait(2)
+        try:
+            second.run(tid, str(src), str(dst), resume=True)
+            raise AssertionError("duplicate execution should be rejected")
+        except TaskAlreadyRunningError:
+            pass
+        release_first.set()
+        thread.join(5)
+
+    logs = svc.get_file_logs(tid)
+    assert len(result) == 1 and result[0].copied == 1
+    assert len(logs) == 1, len(logs)
+    svc.close()
+    shutil.rmtree(d)
+    print("PASS test_duplicate_task_execution_is_rejected")
+
+
+def test_failed_task_can_resume_only_undone_files():
+    """失败任务应可续传，且已成功文件不会再次复制。"""
+    d = tempfile.mkdtemp()
+    src, dst, data = Path(d)/"s", Path(d)/"t", Path(d)/"data"
+    setup_tree(src, {"a.txt": "a", "b.txt": "b"})
+    svc = BackupService(data)
+    diff = svc.compare(str(src), str(dst))
+    tid = svc.create_task(str(src), str(dst), diff)
+    reports = [
+        DiskHealth("source", str(src), "healthy", smart_status="Verified"),
+        DiskHealth("target", str(dst), "healthy", smart_status="Verified"),
+    ]
+    original = BackupExecutor._copy_with_retry
+
+    def fail_b(executor, src_file, dst_file, progress_cb=None):
+        if src_file.name == "b.txt":
+            return False, False, "error_io:PermissionError"
+        return original(executor, src_file, dst_file, progress_cb)
+
+    with patch.object(BackupExecutor, "_copy_with_retry", fail_b), \
+            patch("vaultguard.core.executor.check_backup_disks",
+                  return_value=reports):
+        first, _ = svc.execute(tid, str(src), str(dst))
+    assert first.copied == 1 and first.failed == 1
+
+    resumable = svc.find_resumable(str(src), str(dst))
+    assert resumable is not None and resumable["id"] == tid
+    with patch("vaultguard.core.executor.check_backup_disks",
+               return_value=reports):
+        second, _ = svc.execute(tid, str(src), str(dst), resume=True)
+
+    logs = svc.get_file_logs(tid)
+    a_logs = [row for row in logs if row["file_path"] == "a.txt"]
+    assert second.copied == 2 and second.failed == 0
+    assert len(a_logs) == 1, len(a_logs)
+    assert (dst/"a.txt").read_text() == "a"
+    assert (dst/"b.txt").read_text() == "b"
+    svc.close()
+    shutil.rmtree(d)
+    print("PASS test_failed_task_can_resume_only_undone_files")
+
+
 def test_delete_sync():
     """删除同步：源文件被删后，开启 delete_sync 应同步删除目标多余文件，
     并在 file_logs 中记录 delete 动作。"""
@@ -479,5 +573,7 @@ if __name__ == "__main__":
     test_isolated_hash_verification()
     test_rescue_stall_skips_and_continues()
     test_rescue_mode_never_deletes_target_files()
+    test_duplicate_task_execution_is_rejected()
+    test_failed_task_can_resume_only_undone_files()
     test_delete_sync()
     print("\n=== ALL TESTS PASSED ===")

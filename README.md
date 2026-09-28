@@ -2,7 +2,7 @@
 
 [![Release](https://img.shields.io/github/v/release/FishXIN/VaultGuard?display_name=tag)](https://github.com/FishXIN/VaultGuard/releases)
 [![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows-1f2328)](https://github.com/FishXIN/VaultGuard/releases)
-[![Tests](https://img.shields.io/badge/tests-14%20passed-2ea043)](https://github.com/FishXIN/VaultGuard)
+[![Tests](https://img.shields.io/badge/tests-16%20passed-2ea043)](https://github.com/FishXIN/VaultGuard)
 
 以「文件安全」为最高优先级的本地硬盘增量备份工具（Windows / macOS）。提供原生桌面应用体验。
 
@@ -26,7 +26,7 @@
 - **文件安全第一**：原子写入（临时文件 + 校验 + 重命名）、覆盖前不破坏旧文件、完整性校验、失败隔离、断电安全清理、默认绝不删除目标文件。
 - **增量优先**：只处理新增/更新的文件，已备份未变更文件绝不重复拷贝；复制后回写源 mtime 保证下次对比准确。
 - **先选后执行**：对比完成后展示清单（新增/更新/跳过 + 预计传输），用户确认后才执行。
-- **可中断·可续传**：任务可暂停/中断，断点持久化到 SQLite，下次可「从断点继续」或「重新开始」。
+- **可中断·可续传**：任务可暂停/中断，失败任务也可只重试未完成文件；同一任务禁止并发执行，避免重复复制和统计错乱。
 - **可追溯**：每次任务与每个文件操作写入 SQLite，并输出可读文本日志。
 - **备份前硬盘检查**：每次执行前读取系统 SMART/健康状态；只查询元数据，不启动自检、不扫描扇区、不写入测试数据。目标盘明确故障或只读时停止备份，无法读取 SMART 时提示但不误拦截。
 - **卡死隔离与坏盘抢救**：所有文件在独立复制进程中执行，单文件 30 秒无进展会被隔离并继续后续文件；源盘异常或无法确认健康时额外启用小文件优先并禁用删除同步，尽可能保全可读数据。

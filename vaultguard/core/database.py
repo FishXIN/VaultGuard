@@ -144,12 +144,21 @@ class Database:
             return cur.fetchall()
 
     def find_resumable_task(self, source: str, target: str) -> Optional[sqlite3.Row]:
-        """查找同源/目标且未完成（running/paused）的任务，用于断点续传。"""
+        """查找同源/目标且仍有未完成文件的任务，用于断点续传。"""
         with self._lock:
             cur = self._conn.execute(
                 "SELECT * FROM backup_tasks WHERE source_path=? AND target_path=? "
-                "AND status IN (?, ?) ORDER BY start_time DESC LIMIT 1",
-                (source, target, TaskStatus.RUNNING.value, TaskStatus.PAUSED.value),
+                "AND status IN (?, ?, ?) "
+                "AND EXISTS (SELECT 1 FROM pending_items p "
+                "WHERE p.task_id=backup_tasks.id AND p.done=0) "
+                "ORDER BY start_time DESC LIMIT 1",
+                (
+                    source,
+                    target,
+                    TaskStatus.RUNNING.value,
+                    TaskStatus.PAUSED.value,
+                    TaskStatus.FAILED.value,
+                ),
             )
             return cur.fetchone()
 

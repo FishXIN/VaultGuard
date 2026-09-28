@@ -6,6 +6,15 @@ The format is based on Keep a Changelog, with a pragmatic structure tailored for
 
 ## [Unreleased]
 
+## [1.3.1] - 2026-09-29
+
+### Changed
+- Failed tasks remain resumable and retry only their unfinished files.
+
+### Fixed
+- Duplicate execution of the same task is rejected to prevent repeated copies, duplicate logs, and stale failure totals.
+- File access failures now distinguish occupied or permission-denied files from general I/O errors.
+
 ## [1.3.0] - 2026-09-28
 
 ### Added

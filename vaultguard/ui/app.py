@@ -526,6 +526,7 @@ class VaultGuardApp:
         self.source_path = self.svc.settings.last_source
         self.target_path = self.svc.settings.last_target
         self._running = False
+        self._execution_start_lock = threading.Lock()
         self._nav_index = 0
         self._nav_items: list[ft.Container] = []
         self._task_status_slot: Optional[ft.Container] = None
@@ -2253,11 +2254,15 @@ class VaultGuardApp:
         self._confirm_backup(self._cf_src, self._cf_dst, filtered)
 
     def _confirm_backup(self, src: str, dst: str, diff: DiffResult) -> None:
+        if not self._claim_execution():
+            self._snack("备份任务已在执行")
+            return
         try:
             task_id = self.svc.create_task(src, dst, diff)
             self.current_task_id = task_id
-            self._start_execution(src, dst, resume=False)
+            self._start_execution(src, dst, resume=False, already_claimed=True)
         except Exception as ex:  # noqa: BLE001
+            self._release_execution()
             self._handle_error("创建备份任务", ex)
 
     # ========== 任务进行页 ==========
@@ -2332,9 +2337,28 @@ class VaultGuardApp:
             ),
         ], spacing=T.SP_5, expand=True))
 
-    def _start_execution(self, src: str, dst: str, resume: bool) -> None:
+    def _claim_execution(self) -> bool:
+        with self._execution_start_lock:
+            if self._running:
+                return False
+            self._running = True
+            return True
+
+    def _release_execution(self) -> None:
+        with self._execution_start_lock:
+            self._running = False
+
+    def _start_execution(
+        self,
+        src: str,
+        dst: str,
+        resume: bool,
+        already_claimed: bool = False,
+    ) -> None:
+        if not already_claimed and not self._claim_execution():
+            self._snack("备份任务已在执行")
+            return
         self._show_progress_view()
-        self._running = True
         self._set_task_status("running")
         self.executor = self.svc.make_executor()
         task_id = self.current_task_id
@@ -2377,11 +2401,11 @@ class VaultGuardApp:
                     )
                 except Exception as log_ex:  # noqa: BLE001
                     self._record_error("写入备份日志失败", log_ex)
-                self._running = False
+                self._release_execution()
                 self._copy_refreshing = False
                 self._run_ui(lambda: self._on_finished(prog))
             except Exception as ex:
-                self._running = False
+                self._release_execution()
                 self._copy_refreshing = False
                 self._handle_error("执行备份", ex)
 
@@ -2937,6 +2961,8 @@ class VaultGuardApp:
             raw_reason = it["reason"] or ""
             reason_text = {
                 "error_stalled": "硬盘长时间无响应，已跳过",
+                "error_io:PermissionError": "文件被占用或无读取权限",
+                "error_io:OSError": "文件读写失败",
                 "skipped_rescue_mode": "抢救模式下保留目标文件",
             }.get(
                 raw_reason,
