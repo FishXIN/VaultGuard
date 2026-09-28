@@ -77,6 +77,12 @@ jobs:
             $macLines = Get-Content $releaseChecksums | Where-Object { $_ -notmatch "windows" }
           }
           $winLines = Get-Content $windowsChecksums | Where-Object { $_ -match "windows" }
-          @(@($macLines) + @($winLines)) | Set-Content -Path $releaseChecksums -Encoding ascii
+          $allLines = @($macLines) + @($winLines)
+          $content = ($allLines -join "`n") + "`n"
+          [System.IO.File]::WriteAllText(
+            $releaseChecksums,
+            $content,
+            [System.Text.Encoding]::ASCII
+          )
 
           gh release upload $env:RELEASE_TAG $zip.FullName $releaseChecksums --clobber
