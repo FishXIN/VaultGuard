@@ -7,7 +7,8 @@ from typing import Callable, Optional
 
 from .config import ConfigManager, app_data_dir
 from .database import Database
-from .executor import BackupExecutor, cleanup_temp_files
+from .disk_health import DiskHealth, format_health_summary
+from .executor import BackupExecutor
 from .models import CompareProgress, CopyProgress, DiffResult, TaskStatus
 from .scanner import compare
 
@@ -58,21 +59,39 @@ class BackupService:
         target: str,
         resume: bool = False,
         progress_cb: Optional[Callable[[CopyProgress], None]] = None,
+        health_cb: Optional[Callable[[list[DiskHealth]], None]] = None,
     ) -> tuple[CopyProgress, BackupExecutor]:
         """执行备份任务。返回最终进度与 executor（便于外部控制暂停/取消）。"""
-        # 执行前清理残留临时文件（断电安全）
-        cleanup_temp_files(target)
         executor = BackupExecutor(self.db, self.settings)
-        prog = executor.run(task_id, source, target, resume=resume, progress_cb=progress_cb)
+        prog = executor.run(
+            task_id,
+            source,
+            target,
+            resume=resume,
+            progress_cb=progress_cb,
+            health_cb=health_cb,
+        )
         # 输出文本日志
-        self._write_text_log(task_id, source, target, prog)
+        self._write_text_log(
+            task_id,
+            source,
+            target,
+            prog,
+            health_reports=executor.disk_health_reports,
+        )
         return prog, executor
 
     def make_executor(self) -> BackupExecutor:
         return BackupExecutor(self.db, self.settings)
 
-    def _write_text_log(self, task_id: int, source: str, target: str,
-                        prog: CopyProgress) -> None:
+    def _write_text_log(
+        self,
+        task_id: int,
+        source: str,
+        target: str,
+        prog: CopyProgress,
+        health_reports: Optional[list[DiskHealth]] = None,
+    ) -> None:
         """输出可读文本日志，便于人工排查。"""
         log_dir = self.data_dir / "logs"
         log_dir.mkdir(parents=True, exist_ok=True)
@@ -84,7 +103,10 @@ class BackupService:
             f.write(f"  复制 {prog.copied} / 跳过 {prog.skipped} / "
                     f"删除 {prog.deleted} / 失败 {prog.failed}"
                     f"（共 {prog.total_files} 个待处理项）\n")
-            f.write(f"  传输 {prog.transferred_bytes} 字节\n\n")
+            f.write(f"  传输 {prog.transferred_bytes} 字节\n")
+            if health_reports:
+                f.write(f"  硬盘健康 {format_health_summary(health_reports)}\n")
+            f.write("\n")
 
     def list_tasks(self, limit: int = 100):
         return self.db.list_tasks(limit)

@@ -14,6 +14,8 @@ dist/
 *.db-wal
 *.db-shm
 logs/
+.dbg/
+debug-*.md
 
 # 系统
 .DS_Store

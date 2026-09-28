@@ -2,7 +2,7 @@
 
 [![Release](https://img.shields.io/github/v/release/FishXIN/VaultGuard?display_name=tag)](https://github.com/FishXIN/VaultGuard/releases)
 [![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows-1f2328)](https://github.com/FishXIN/VaultGuard/releases)
-[![Tests](https://img.shields.io/badge/tests-7%20passed-2ea043)](https://github.com/FishXIN/VaultGuard)
+[![Tests](https://img.shields.io/badge/tests-14%20passed-2ea043)](https://github.com/FishXIN/VaultGuard)
 
 以「文件安全」为最高优先级的本地硬盘增量备份工具（Windows / macOS）。提供原生桌面应用体验。
 
@@ -28,6 +28,8 @@
 - **先选后执行**：对比完成后展示清单（新增/更新/跳过 + 预计传输），用户确认后才执行。
 - **可中断·可续传**：任务可暂停/中断，断点持久化到 SQLite，下次可「从断点继续」或「重新开始」。
 - **可追溯**：每次任务与每个文件操作写入 SQLite，并输出可读文本日志。
+- **备份前硬盘检查**：每次执行前读取系统 SMART/健康状态；只查询元数据，不启动自检、不扫描扇区、不写入测试数据。目标盘明确故障或只读时停止备份，无法读取 SMART 时提示但不误拦截。
+- **卡死隔离与坏盘抢救**：所有文件在独立复制进程中执行，单文件 30 秒无进展会被隔离并继续后续文件；源盘异常或无法确认健康时额外启用小文件优先并禁用删除同步，尽可能保全可读数据。
 
 ## 首次打开（绕过系统安全提示）
 
@@ -90,6 +92,8 @@ VaultGuard/
 │   │   ├── config.py        # 设置与数据目录
 │   │   ├── scanner.py       # 模块1：扫描与对比引擎
 │   │   ├── executor.py      # 模块2+3：原子复制 + 断点续传
+│   │   ├── copy_worker.py   # 异常源盘隔离复制进程
+│   │   ├── disk_health.py   # 只读硬盘健康检查
 │   │   ├── database.py      # 模块4：SQLite 日志/任务持久化
 │   │   └── service.py       # 服务层（编排 CLI/GUI 共用）
 │   └── ui/                  # 模块5+6：VaultGuard 桌面图形界面
@@ -114,11 +118,11 @@ VaultGuard/
 PYTHONPATH=. .venv/bin/python tests/test_core.py
 ```
 
-覆盖：原子复制、mtime 回写、增量跳过、更新检测、失败隔离、断点续传、排除规则。
+覆盖：原子复制、mtime 回写、增量跳过、更新检测、失败隔离、断点续传、排除规则、只读健康检查、文件内取消、坏盘超时续跑。
 
 ## 设置项
 
-mtime 容差、是否对比大小、hash 完整性校验、删除策略（默认关闭）、排除规则、单文件重试次数。
+mtime 容差、是否对比大小、hash 完整性校验、删除策略（默认关闭）、排除规则、单文件重试次数、异常源盘无进展超时。
 
 ## 尚未包含
 

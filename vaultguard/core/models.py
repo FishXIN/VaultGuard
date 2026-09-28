@@ -106,4 +106,9 @@ class CopyProgress:
     failed: int = 0
     speed_bps: float = 0.0       # 字节/秒
     eta_seconds: float = 0.0     # 预计剩余秒数
+    current_file_bytes: int = 0
+    current_file_size: int = 0
+    file_idle_seconds: float = 0.0
+    file_timeout_seconds: float = 0.0
+    rescue_mode: bool = False
     finished: bool = False

@@ -34,6 +34,14 @@ import sys
 name = "fl" + "et"
 if importlib.util.find_spec(name) is None:
     subprocess.check_call([sys.executable, "-m", "pip", "install", name + ">=0.85"])
+if importlib.util.find_spec("AppKit") is None:
+    subprocess.check_call([
+        sys.executable,
+        "-m",
+        "pip",
+        "install",
+        "pyobjc-framework-Cocoa==10.3.2",
+    ])
 PY
 
 echo "==> 清理旧产物"
@@ -61,7 +69,8 @@ mkdir -p build/VaultGuard dist
   done
 ) &
 BUILD_DIR_GUARD_PID=$!
-env "$VIEW_ENV=$EMPTY_BIN" "$PYINSTALLER" main.py \
+env "PYINSTALLER_CONFIG_DIR=$PWD/build/.pyinstaller" \
+  "$VIEW_ENV=$EMPTY_BIN" "$PYINSTALLER" main.py \
   --noconfirm \
   --log-level WARN \
   --windowed \

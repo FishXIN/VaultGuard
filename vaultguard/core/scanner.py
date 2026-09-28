@@ -16,11 +16,11 @@ from .models import Action, CompareProgress, DiffItem, DiffResult, FileEntry
 
 def _matches_exclude(name: str, rel_path: str, patterns: list[str]) -> bool:
     """判断文件名或相对路径是否命中排除规则。"""
+    parts = Path(rel_path).parts
     for pat in patterns:
         if fnmatch.fnmatch(name, pat):
             return True
         # 按目录名忽略（如 node_modules）
-        parts = Path(rel_path).parts
         if pat in parts:
             return True
     return False
@@ -39,44 +39,43 @@ def scan_directory(
     root = Path(root)
     exclude_patterns = exclude_patterns or []
     visited_dirs: set[tuple[int, int]] = set()  # (st_dev, st_ino) 防循环
+    stack: list[tuple[Path, str]] = [(root, "")]
 
-    for dirpath, dirnames, filenames in os.walk(root, followlinks=follow_symlinks):
-        # 过滤被排除的目录，避免深入遍历
-        pruned = []
-        for d in dirnames:
-            full = os.path.join(dirpath, d)
-            rel = os.path.relpath(full, root)
-            if _matches_exclude(d, rel, exclude_patterns):
-                continue
-            # 防符号链接循环引用
-            if follow_symlinks:
-                try:
-                    st = os.stat(full)
-                    key = (st.st_dev, st.st_ino)
-                    if key in visited_dirs:
-                        continue
-                    visited_dirs.add(key)
-                except OSError:
+    while stack:
+        dirpath, rel_dir = stack.pop()
+        child_dirs: list[tuple[Path, str]] = []
+        try:
+            entries = os.scandir(dirpath)
+        except OSError:
+            continue
+
+        with entries:
+            for entry in entries:
+                rel = os.path.join(rel_dir, entry.name) if rel_dir else entry.name
+                if _matches_exclude(entry.name, rel, exclude_patterns):
                     continue
-            pruned.append(d)
-        dirnames[:] = pruned
+                try:
+                    if entry.is_symlink() and not follow_symlinks:
+                        continue
+                    if entry.is_dir(follow_symlinks=follow_symlinks):
+                        if follow_symlinks:
+                            st = entry.stat(follow_symlinks=True)
+                            key = (st.st_dev, st.st_ino)
+                            if key in visited_dirs:
+                                continue
+                            visited_dirs.add(key)
+                        child_dirs.append((Path(entry.path), rel))
+                        continue
+                    if not entry.is_file(follow_symlinks=follow_symlinks):
+                        continue
+                    st = entry.stat(follow_symlinks=follow_symlinks)
+                except OSError:
+                    # 无法访问的文件跳过，不中断扫描
+                    continue
+                yield FileEntry(rel_path=rel, size=st.st_size, mtime=st.st_mtime)
 
-        for fname in filenames:
-            full = os.path.join(dirpath, fname)
-            rel = os.path.relpath(full, root)
-            if _matches_exclude(fname, rel, exclude_patterns):
-                continue
-            # 跳过符号链接文件（安全：不跟随）
-            if os.path.islink(full) and not follow_symlinks:
-                continue
-            try:
-                st = os.stat(full)
-            except OSError:
-                # 无法访问的文件跳过，不中断扫描
-                continue
-            if not os.path.isfile(full):
-                continue
-            yield FileEntry(rel_path=rel, size=st.st_size, mtime=st.st_mtime)
+        # 保持与 os.walk 接近的深度优先顺序。
+        stack.extend(reversed(child_dirs))
 
 
 def _count_files_with_progress(
@@ -171,6 +170,7 @@ def compare(
     """
     source = Path(source)
     target = Path(target)
+    target_root = os.fspath(target)
     exclude_patterns = exclude_patterns or []
     result = DiffResult()
     started_at = time.monotonic()
@@ -189,7 +189,7 @@ def compare(
         eta = 0.0
         if phase == "comparing" and processed > 0 and total > 0 and not finished:
             eta = (elapsed / processed) * max(total - processed, 0)
-        progress_cb(CompareProgress(
+        snapshot = CompareProgress(
             phase=phase,
             current_file=current_file,
             processed_files=processed,
@@ -198,61 +198,64 @@ def compare(
             elapsed_seconds=elapsed,
             eta_seconds=eta,
             finished=finished,
-        ))
-
-    total_files = 0
-    if progress_cb:
-        def scan_emit(count: int, ratio: float, current_file: str) -> None:
-            emit("scanning", count, 0, current_file, progress_ratio=ratio)
-
-        total_files = _count_files_with_progress(source, exclude_patterns, scan_emit)
-        emit("comparing", 0, total_files, progress_ratio=0.0)
-        started_at = time.monotonic()
+        )
+        progress_cb(snapshot)
 
     count = 0
+    last_progress_at = 0.0
+    if progress_cb:
+        emit("scanning", 0, 0, progress_ratio=0.0)
+
     for entry in scan_directory(source, exclude_patterns):
         count += 1
         if progress_cb:
-            ratio = (count / total_files) if total_files else 0.0
-            emit("comparing", count, total_files, entry.rel_path,
-                 progress_ratio=ratio)
+            now = time.monotonic()
+            if count == 1 or count % 50 == 0 or now - last_progress_at >= 0.08:
+                last_progress_at = now
+                estimated_ratio = min(0.98, count / (count + 500))
+                emit("scanning", count, 0, entry.rel_path,
+                     progress_ratio=estimated_ratio)
 
-        dst = target / entry.rel_path
-        if not dst.exists():
+        dst = os.path.join(target_root, entry.rel_path)
+        try:
+            dst_st = os.stat(dst)
+        except (FileNotFoundError, NotADirectoryError):
+            dst_st = None
+            target_error = None
+        except OSError as exc:
+            dst_st = None
+            target_error = exc
+        else:
+            target_error = None
+        if dst_st is None and target_error is None:
             result.new_items.append(
                 DiffItem(entry.rel_path, Action.NEW, entry.size,
                          entry.mtime, None, "new")
             )
-            continue
-
-        try:
-            dst_st = dst.stat()
-        except OSError:
+        elif dst_st is None:
             # 目标无法 stat，保守起见当作需更新
             result.updated_items.append(
                 DiffItem(entry.rel_path, Action.UPDATED, entry.size,
                          entry.mtime, None, "updated")
             )
-            continue
-
-        size_diff = compare_size and (dst_st.st_size != entry.size)
-        # 源端比目标端更新（超过容差）才算 updated
-        mtime_newer = entry.mtime - dst_st.st_mtime > mtime_tolerance
-
-        if size_diff or mtime_newer:
-            reason = "updated"
-            result.updated_items.append(
-                DiffItem(entry.rel_path, Action.UPDATED, entry.size,
-                         entry.mtime, dst_st.st_mtime, reason)
-            )
         else:
-            result.skipped_items.append(
-                DiffItem(entry.rel_path, Action.SKIP, entry.size,
-                         entry.mtime, dst_st.st_mtime, "unchanged")
-            )
+            size_diff = compare_size and (dst_st.st_size != entry.size)
+            # 源端比目标端更新（超过容差）才算 updated
+            mtime_newer = entry.mtime - dst_st.st_mtime > mtime_tolerance
+
+            if size_diff or mtime_newer:
+                result.updated_items.append(
+                    DiffItem(entry.rel_path, Action.UPDATED, entry.size,
+                             entry.mtime, dst_st.st_mtime, "updated")
+                )
+            else:
+                result.skipped_items.append(
+                    DiffItem(entry.rel_path, Action.SKIP, entry.size,
+                             entry.mtime, dst_st.st_mtime, "unchanged")
+                )
 
     if progress_cb:
-        emit("comparing", count, total_files or count, finished=True,
+        emit("comparing", count, count, finished=True,
              progress_ratio=1.0)
 
     if find_extras and target.exists():

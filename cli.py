@@ -12,6 +12,7 @@ import argparse
 import sys
 from pathlib import Path
 
+from vaultguard.core.disk_health import DiskHealth, format_health_summary
 from vaultguard.core.models import CopyProgress
 from vaultguard.core.service import BackupService
 
@@ -39,12 +40,21 @@ def cmd_compare(svc: BackupService, args) -> int:
 
 def _progress_printer(prog: CopyProgress) -> None:
     pct = (prog.transferred_bytes / prog.total_bytes * 100) if prog.total_bytes else 100
+    if not prog.finished and prog.processed_files < prog.total_files:
+        pct = min(pct, 99.0)
     sys.stdout.write(
         f"\r  [{pct:5.1f}%] {prog.processed_files}/{prog.total_files} "
         f"复制{prog.copied} 失败{prog.failed} "
         f"{_fmt_size(int(prog.speed_bps))}/s  {prog.current_file[:40]:40}"
     )
     sys.stdout.flush()
+
+
+def _health_printer(reports: list[DiskHealth]) -> None:
+    print(f"\n硬盘健康检查：{format_health_summary(reports)}")
+    for report in reports:
+        device = f" ({report.name or report.device})" if report.name or report.device else ""
+        print(f"  {report.role}: {report.smart_status or report.status}{device}")
 
 
 def cmd_backup(svc: BackupService, args) -> int:
@@ -85,7 +95,8 @@ def cmd_backup(svc: BackupService, args) -> int:
 
     print(f"\n开始执行任务 #{task_id} ...")
     prog, _ = svc.execute(task_id, source, target, resume=resume,
-                          progress_cb=_progress_printer)
+                          progress_cb=_progress_printer,
+                          health_cb=_health_printer)
     print(f"\n\n完成：复制 {prog.copied} / 失败 {prog.failed} / 共 {prog.total_files} 个。")
     if prog.failed:
         print("存在失败文件，可重新运行 backup 以重试。")

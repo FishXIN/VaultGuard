@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Callable, Optional
 
 from vaultguard import __version__
+from vaultguard.core.disk_health import DiskHealth, format_health_summary
 from vaultguard.core.models import CompareProgress, CopyProgress, DiffResult
 from vaultguard.core.service import BackupService
 from . import tokens as T
@@ -513,6 +514,8 @@ def _set_progress_value(track: ft.Container, pct: float) -> None:
 class VaultGuardApp:
     """应用主体，管理页面路由与状态。"""
 
+    _CF_FILE_GROUP_SIZE = 500
+
     def __init__(self, page: ft.Page) -> None:
         self.page = page
         self.svc = BackupService()
@@ -535,6 +538,7 @@ class VaultGuardApp:
         self._latest_copy_prog: Optional[CopyProgress] = None
         self._copy_refreshing = False
         self._history_refreshing = False
+        self._last_disk_health: list[DiskHealth] = []
 
         self._update_card: Optional[ft.Control] = None
 
@@ -1578,9 +1582,9 @@ class VaultGuardApp:
         self.cmp_pb_track = _progress_track(height=10)
         _set_progress_value(self.cmp_pb_track, 0)
         self.cmp_pct = ft.Text(
-            "统计中", size=T.TEXT_28, weight=T.FW_MEDIUM,
+            "扫描中", size=T.TEXT_28, weight=T.FW_MEDIUM,
             color=T.TEXT_TITLE, font_family=T.FONT_MONO)
-        self.cmp_stat = ft.Text("正在统计文件数量 ...",
+        self.cmp_stat = ft.Text("正在扫描并对比 ...",
                                 size=T.TEXT_13, color=T.TEXT_PRIMARY)
         self.cmp_eta = _mono_text("预计剩余 --", size=T.TEXT_13,
                                   color=T.TEXT_TERTIARY)
@@ -1623,12 +1627,11 @@ class VaultGuardApp:
 
         if prog.phase == "scanning":
             elapsed = max(time.monotonic() - self._compare_started_at, 0.0)
-            # 扫描阶段尚未拿到总文件数，无法给出真实百分比；此处只展示真实已发现
-            # 文件数，避免把估算值伪装成 “98%” 之类的确定进度。
+            # 单遍扫描时总文件数尚未知，只展示真实完成量，不伪造百分比。
             _set_progress_value(self.cmp_pb_track, 0.0)
             self.cmp_pct.value = "扫描中"
-            self.cmp_stat.value = f"已发现 {prog.processed_files} 个文件"
-            self.cmp_eta.value = f"用时 {fmt_eta(elapsed)} · 正在统计总量"
+            self.cmp_stat.value = f"已检查 {prog.processed_files} 个文件"
+            self.cmp_eta.value = f"用时 {fmt_eta(elapsed)} · 正在扫描并对比"
         else:
             compare_pct = prog.progress_ratio if prog.progress_ratio else pct
             _set_progress_value(self.cmp_pb_track, compare_pct)
@@ -1893,7 +1896,30 @@ class VaultGuardApp:
                     node["dirs"][p] = child
                 node = child
             node["files"].append(it)
+        self._cf_group_large_file_sets(root)
         return root
+
+    def _cf_group_large_file_sets(self, node: dict) -> None:
+        """把同层海量文件分为可展开的小组，避免一次创建数万 UI 控件。"""
+        for child in list(node["dirs"].values()):
+            self._cf_group_large_file_sets(child)
+
+        files = node["files"]
+        if len(files) <= self._CF_FILE_GROUP_SIZE:
+            return
+
+        node["files"] = []
+        for offset in range(0, len(files), self._CF_FILE_GROUP_SIZE):
+            batch = files[offset:offset + self._CF_FILE_GROUP_SIZE]
+            end = offset + len(batch)
+            key = f"\x00files-{offset:09d}"
+            group_path = f"{node['path']}::files:{offset}"
+            node["dirs"][key] = {
+                "dirs": {},
+                "files": batch,
+                "path": group_path,
+                "label": f"文件 {offset + 1}-{end}",
+            }
 
     def _cf_dir_items(self, node: dict) -> list:
         """收集目录节点下的所有文件项（含递归）。"""
@@ -1945,7 +1971,7 @@ class VaultGuardApp:
         dir_names = sorted(node["dirs"].keys(), key=lambda s: s.lower())
         for name in dir_names:
             sub = node["dirs"][name]
-            row = self._cf_dir_row(name, sub, depth)
+            row = self._cf_dir_row(sub.get("label", name), sub, depth)
             if animate_children:
                 self._cf_prepare_anim(row)
             rows.append(row)
@@ -2316,6 +2342,17 @@ class VaultGuardApp:
         def progress_cb(prog: CopyProgress):
             self._latest_copy_prog = prog
 
+        def health_cb(reports: list[DiskHealth]) -> None:
+            self._last_disk_health = reports
+            summary = format_health_summary(reports)
+
+            def show_health() -> None:
+                self.lbl_stat.value = "硬盘检查完成"
+                self.lbl_file.value = summary
+                self.page.update()
+
+            self._run_ui(show_health)
+
         async def refresher():
             while self._copy_refreshing:
                 self._update_progress()
@@ -2327,12 +2364,17 @@ class VaultGuardApp:
             self._copy_refreshing = True
             self._start_refresher(refresher, "备份进度刷新")
             try:
-                from vaultguard.core.executor import cleanup_temp_files
-                cleanup_temp_files(dst)
                 prog = self.executor.run(task_id, src, dst, resume=resume,
-                                         progress_cb=progress_cb)
+                                         progress_cb=progress_cb,
+                                         health_cb=health_cb)
                 try:
-                    self.svc._write_text_log(task_id, src, dst, prog)
+                    self.svc._write_text_log(
+                        task_id,
+                        src,
+                        dst,
+                        prog,
+                        health_reports=self.executor.disk_health_reports,
+                    )
                 except Exception as log_ex:  # noqa: BLE001
                     self._record_error("写入备份日志失败", log_ex)
                 self._running = False
@@ -2350,6 +2392,8 @@ class VaultGuardApp:
         if prog is None:
             return
         pct = (prog.transferred_bytes / prog.total_bytes) if prog.total_bytes else 1.0
+        if not prog.finished and prog.processed_files < prog.total_files:
+            pct = min(pct, 0.99)
         # 纯色填充，靠父 Row 的 expand 比例近似真实 width 推进。
         # expand 必须为 int（Flet 校验会拒绝 float 并使整帧更新失败），
         # 故用千分比整数表达比例。
@@ -2376,8 +2420,22 @@ class VaultGuardApp:
             stat_segs.append(f"删除 {prog.deleted}")
         stat_segs.append(f"失败 {prog.failed}")
         self.lbl_stat.value = " · ".join(stat_segs)
-        self.lbl_speed.value = (
-            f"{fmt_size(prog.speed_bps)}/s · 剩余 {fmt_eta(prog.eta_seconds)}")
+        if prog.file_idle_seconds >= 1:
+            self.lbl_speed.color = T.WARNING
+            self.lbl_speed.value = (
+                f"等待硬盘响应 {prog.file_idle_seconds:.0f} 秒"
+                f" / {prog.file_timeout_seconds:.0f} 秒")
+        else:
+            self.lbl_speed.color = T.TEXT_TERTIARY
+            current = ""
+            if prog.current_file_size:
+                current = (
+                    f" · 当前 {fmt_size(prog.current_file_bytes)}"
+                    f"/{fmt_size(prog.current_file_size)}")
+            rescue = " · 抢救模式" if prog.rescue_mode else ""
+            self.lbl_speed.value = (
+                f"{fmt_size(prog.speed_bps)}/s{current}"
+                f" · 剩余 {fmt_eta(prog.eta_seconds)}{rescue}")
         self.lbl_file.value = prog.current_file or "..."
 
         try:
@@ -2474,6 +2532,8 @@ class VaultGuardApp:
                 *([kv("删除", f"{prog.deleted} 个")] if prog.deleted else []),
                 kv("失败", f"{prog.failed} 个"),
                 kv("传输", fmt_size(prog.transferred_bytes)),
+                *([kv("硬盘健康", format_health_summary(self._last_disk_health),
+                      mono=False)] if self._last_disk_health else []),
                 ft.Container(height=T.SP_2),
                 ft.Row([
                     _default_button("返回任务",
@@ -2874,8 +2934,14 @@ class VaultGuardApp:
         def _make_file_row(it: dict, depth: int, color: str) -> ft.Container:
             name = Path(it["file_path"]).name
             size_text = fmt_size(it["size"]) if it["size"] else "--"
-            reason_text = (it["reason"] or "").replace("error_", "").replace(
-                "ok_", "")
+            raw_reason = it["reason"] or ""
+            reason_text = {
+                "error_stalled": "硬盘长时间无响应，已跳过",
+                "skipped_rescue_mode": "抢救模式下保留目标文件",
+            }.get(
+                raw_reason,
+                raw_reason.replace("error_", "").replace("ok_", ""),
+            )
             reason_widget = (
                 _muted_text(reason_text, size=T.TEXT_12)
                 if reason_text and reason_text not in ("new", "updated")

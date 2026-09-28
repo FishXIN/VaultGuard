@@ -6,6 +6,21 @@ The format is based on Keep a Changelog, with a pragmatic structure tailored for
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-09-28
+
+### Added
+- Read-only source/target disk health checks before each backup.
+- Rescue mode for unhealthy or unknown-status source disks: small files first, isolated copy worker, inactivity timeout, and automatic continuation after stalled files.
+
+### Changed
+- File copies now run in a persistent isolated worker, report chunk-level progress, and respond to pause/cancel without waiting for the whole file.
+- Delete synchronization is disabled automatically during rescue mode to protect target-only data when a damaged source disk may be incompletely scanned.
+
+### Fixed
+- Large directory comparisons now use a single optimized scan and bounded progress callbacks.
+- Large flat confirmation lists are grouped to avoid eagerly creating thousands of UI controls.
+- A single unreadable or permanently blocked source file no longer prevents recovery of later readable files when rescue mode is active.
+
 ## [1.2.8] - 2026-06-18
 
 ### Fixed

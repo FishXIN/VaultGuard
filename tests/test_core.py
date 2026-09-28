@@ -1,16 +1,21 @@
 """核心逻辑自动化测试：断点续传、失败隔离、原子性、mtime 回写。"""
 import os
+import plistlib
 import shutil
+import subprocess
 import tempfile
 import threading
 import time
 from pathlib import Path
+from unittest.mock import patch
 
+from vaultguard.core import disk_health
 from vaultguard.core.config import Settings
 from vaultguard.core.database import Database
+from vaultguard.core.disk_health import DiskHealth, check_disk_health
 from vaultguard.core.executor import BackupExecutor, cleanup_temp_files
-from vaultguard.core.models import TaskStatus
-from vaultguard.core.scanner import compare
+from vaultguard.core.models import Action, DiffItem, DiffResult, TaskStatus
+from vaultguard.core.scanner import compare, scan_directory
 from vaultguard.core.service import BackupService
 
 
@@ -160,7 +165,7 @@ def test_exclude():
 
 
 def test_scan_progress_is_continuous():
-    """统计进度：大目录扫描时必须产生多个中间进度，不能 0 直接跳 100。"""
+    """大目录扫描保持连续进度，但不能为每个文件制造一次回调。"""
     d = tempfile.mkdtemp()
     src, dst, data = Path(d)/"s", Path(d)/"t", Path(d)/"data"
     src.mkdir(parents=True)
@@ -169,7 +174,9 @@ def test_scan_progress_is_continuous():
 
     events = []
     svc = BackupService(data)
-    diff = svc.compare(str(src), str(dst), progress_cb=events.append)
+    with patch("vaultguard.core.scanner.scan_directory",
+               wraps=scan_directory) as scan:
+        diff = svc.compare(str(src), str(dst), progress_cb=events.append)
     scan_ratios = [
         round(e.progress_ratio, 4)
         for e in events
@@ -183,12 +190,234 @@ def test_scan_progress_is_continuous():
     assert diff.new_count == 260, f"expected 260, got {diff.new_count}"
     assert len(unique_ratios) >= 5, f"scan progress jumped: {unique_ratios}"
     assert unique_ratios == sorted(unique_ratios), "scan progress should be monotonic"
-    assert len(current_files) >= 260, "scan should report each current file"
-    assert any(name.endswith("f0.txt") for name in current_files), current_files[:5]
+    assert 5 <= len(current_files) < 50, \
+        f"scan callbacks should be sampled, got {len(current_files)}"
+    assert all(name.endswith(".txt") for name in current_files), current_files[:5]
+    assert scan.call_count == 1, f"source should be scanned once, got {scan.call_count}"
 
     svc.close()
     shutil.rmtree(d)
     print("PASS test_scan_progress_is_continuous")
+
+
+def test_macos_health_check_is_read_only():
+    """磁盘健康检查只读取系统元数据，不启动自检、修复或写入操作。"""
+    d = tempfile.mkdtemp()
+    df_result = subprocess.CompletedProcess(
+        ["df"], 0,
+        stdout=(
+            "Filesystem 512-blocks Used Available Capacity Mounted on\n"
+            "/dev/disk9s1 1000 100 900 10% /Volumes/Test\n"
+        ),
+        stderr="",
+    )
+    diskutil_result = subprocess.CompletedProcess(
+        ["diskutil"], 0,
+        stdout=plistlib.dumps({
+            "DeviceNode": "/dev/disk9s1",
+            "VolumeName": "Test",
+            "SMARTStatus": "Verified",
+            "WritableVolume": True,
+        }),
+        stderr=b"",
+    )
+
+    with patch("vaultguard.core.disk_health.sys.platform", "darwin"), \
+            patch("vaultguard.core.disk_health.subprocess.run",
+                  side_effect=[df_result, diskutil_result]) as run:
+        report = check_disk_health(d, "target")
+
+    commands = [" ".join(call.args[0]) for call in run.call_args_list]
+    assert report.status == "healthy", report
+    assert commands == [
+        f"df -P {Path(d).resolve()}",
+        "diskutil info -plist /dev/disk9s1",
+    ], commands
+    forbidden = ("verifyDisk", "repair", "smartctl", "badblocks", "fsck")
+    assert not any(word in " ".join(commands) for word in forbidden)
+    shutil.rmtree(d)
+    print("PASS test_macos_health_check_is_read_only")
+
+
+def test_failing_target_health_blocks_backup():
+    """目标盘明确报告故障时，不应开始创建或覆盖目标文件。"""
+    d = tempfile.mkdtemp()
+    src, dst, data = Path(d)/"s", Path(d)/"t", Path(d)/"data"
+    setup_tree(src, {"a.txt": "safe"})
+    setup_tree(dst, {"leftover.bak.tmp": "must remain untouched"})
+    svc = BackupService(data)
+    diff = svc.compare(str(src), str(dst))
+    tid = svc.create_task(str(src), str(dst), diff)
+    reports = [
+        DiskHealth("source", str(src), "healthy", smart_status="Verified"),
+        DiskHealth("target", str(dst), "failing", smart_status="Failing"),
+    ]
+
+    with patch("vaultguard.core.executor.check_backup_disks",
+               return_value=reports):
+        try:
+            svc.execute(tid, str(src), str(dst))
+            raise AssertionError("backup should stop for a failing target disk")
+        except RuntimeError as exc:
+            assert "目标硬盘健康检查未通过" in str(exc)
+
+    assert not (dst/"a.txt").exists()
+    assert (dst/"leftover.bak.tmp").exists()
+    assert svc.db.get_task(tid)["status"] == TaskStatus.FAILED.value
+    svc.close()
+    shutil.rmtree(d)
+    print("PASS test_failing_target_health_blocks_backup")
+
+
+def test_health_check_timeout_is_bounded():
+    """健康检查子进程无响应时，主任务必须按时返回保守状态。"""
+    class HungProcess:
+        returncode = None
+
+        def communicate(self, _input, timeout):
+            raise subprocess.TimeoutExpired("health-worker", timeout)
+
+        def kill(self):
+            self.returncode = -9
+
+    process = HungProcess()
+    with patch("vaultguard.core.disk_health.subprocess.Popen",
+               return_value=process):
+        report = disk_health._check_disk_health_bounded(
+            "/possibly-damaged", "source", timeout=0.01)
+
+    assert process.returncode == -9
+    assert report.status == "warning"
+    assert "exceeded" in report.detail
+    print("PASS test_health_check_timeout_is_bounded")
+
+
+def test_cancel_inside_large_file():
+    """取消应在分块边界生效，不必等待整个大文件复制完成。"""
+    d = tempfile.mkdtemp()
+    src, dst, data = Path(d)/"s", Path(d)/"t", Path(d)/"data"
+    setup_tree(src, {"large.bin": os.urandom(2_000_000)})
+    svc = BackupService(data)
+    svc.settings.chunk_size = 64 * 1024
+    diff = svc.compare(str(src), str(dst))
+    tid = svc.create_task(str(src), str(dst), diff)
+    executor = svc.make_executor()
+    reports = [
+        DiskHealth("source", str(src), "healthy", smart_status="Verified"),
+        DiskHealth("target", str(dst), "healthy", smart_status="Verified"),
+    ]
+
+    def cancel_after_first_chunk(prog):
+        if prog.transferred_bytes > 0 and prog.processed_files == 0:
+            executor.cancel()
+
+    with patch("vaultguard.core.executor.check_backup_disks",
+               return_value=reports):
+        prog = executor.run(
+            tid, str(src), str(dst), progress_cb=cancel_after_first_chunk)
+
+    assert not prog.finished
+    assert prog.processed_files == 0
+    assert svc.db.get_task(tid)["status"] == TaskStatus.PAUSED.value
+    assert not (dst/"large.bin").exists()
+    assert not (dst/"large.bin.bak.tmp").exists()
+    svc.close()
+    shutil.rmtree(d)
+    print("PASS test_cancel_inside_large_file")
+
+
+def test_isolated_hash_verification():
+    """隔离复制进程仍应执行可选 hash 校验并记录 verified。"""
+    d = tempfile.mkdtemp()
+    src, dst, data = Path(d)/"s", Path(d)/"t", Path(d)/"data"
+    setup_tree(src, {"checked.bin": os.urandom(512_000)})
+    svc = BackupService(data)
+    svc.settings.verify_hash = True
+    diff = svc.compare(str(src), str(dst))
+    tid = svc.create_task(str(src), str(dst), diff)
+    reports = [
+        DiskHealth("source", str(src), "healthy", smart_status="Verified"),
+        DiskHealth("target", str(dst), "healthy", smart_status="Verified"),
+    ]
+
+    with patch("vaultguard.core.executor.check_backup_disks",
+               return_value=reports):
+        prog, _ = svc.execute(tid, str(src), str(dst))
+
+    logs = svc.get_file_logs(tid)
+    assert prog.copied == 1 and prog.failed == 0
+    assert logs[0]["verified"] == 1
+    assert (src/"checked.bin").read_bytes() == (dst/"checked.bin").read_bytes()
+    svc.close()
+    shutil.rmtree(d)
+    print("PASS test_isolated_hash_verification")
+
+
+def test_rescue_stall_skips_and_continues():
+    """异常源盘的单文件无进展超时后，应继续抢救后续可读文件。"""
+    if not hasattr(os, "mkfifo"):
+        print("PASS test_rescue_stall_skips_and_continues (unsupported)")
+        return
+
+    d = tempfile.mkdtemp()
+    src, dst, data = Path(d)/"s", Path(d)/"t", Path(d)/"data"
+    src.mkdir(parents=True)
+    os.mkfifo(src/"stuck.pipe")
+    setup_tree(src, {"readable.txt": "recover me"})
+    diff = DiffResult(new_items=[
+        DiffItem("stuck.pipe", Action.NEW, 0, 0.0),
+        DiffItem("readable.txt", Action.NEW, 10, 0.0),
+    ])
+    svc = BackupService(data)
+    svc.settings.rescue_stall_timeout = 0.4
+    svc.settings.retry_times = 0
+    tid = svc.create_task(str(src), str(dst), diff)
+    reports = [
+        DiskHealth("source", str(src), "failing", smart_status="Failing"),
+        DiskHealth("target", str(dst), "healthy", smart_status="Verified"),
+    ]
+
+    started = time.monotonic()
+    with patch("vaultguard.core.executor.check_backup_disks",
+               return_value=reports):
+        prog, _ = svc.execute(tid, str(src), str(dst))
+    elapsed = time.monotonic() - started
+
+    assert elapsed < 5, elapsed
+    assert prog.failed == 1 and prog.copied == 1, prog
+    assert (dst/"readable.txt").read_text() == "recover me"
+    assert not (dst/"stuck.pipe").exists()
+    assert not list(dst.rglob("*.bak.tmp"))
+    svc.close()
+    shutil.rmtree(d)
+    print("PASS test_rescue_stall_skips_and_continues")
+
+
+def test_rescue_mode_never_deletes_target_files():
+    """源盘异常时，可能漏扫文件，因此删除同步必须自动降级为保留。"""
+    d = tempfile.mkdtemp()
+    src, dst, data = Path(d)/"s", Path(d)/"t", Path(d)/"data"
+    src.mkdir(parents=True)
+    setup_tree(dst, {"keep-on-target.txt": "only copy"})
+    diff = DiffResult(extra_items=[
+        DiffItem("keep-on-target.txt", Action.EXTRA, 9, 0.0),
+    ])
+    svc = BackupService(data)
+    tid = svc.create_task(str(src), str(dst), diff)
+    reports = [
+        DiskHealth("source", str(src), "unknown", smart_status="Not Supported"),
+        DiskHealth("target", str(dst), "healthy", smart_status="Verified"),
+    ]
+
+    with patch("vaultguard.core.executor.check_backup_disks",
+               return_value=reports):
+        prog, _ = svc.execute(tid, str(src), str(dst))
+
+    assert prog.deleted == 0 and prog.skipped == 1
+    assert (dst/"keep-on-target.txt").read_text() == "only copy"
+    svc.close()
+    shutil.rmtree(d)
+    print("PASS test_rescue_mode_never_deletes_target_files")
 
 
 def test_delete_sync():
@@ -243,5 +472,12 @@ if __name__ == "__main__":
     test_resume()
     test_exclude()
     test_scan_progress_is_continuous()
+    test_macos_health_check_is_read_only()
+    test_failing_target_health_blocks_backup()
+    test_health_check_timeout_is_bounded()
+    test_cancel_inside_large_file()
+    test_isolated_hash_verification()
+    test_rescue_stall_skips_and_continues()
+    test_rescue_mode_never_deletes_target_files()
     test_delete_sync()
     print("\n=== ALL TESTS PASSED ===")

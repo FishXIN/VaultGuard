@@ -7,10 +7,14 @@ import os
 import sys
 
 if __name__ == "__main__":
-    # 子进程模式：仅弹出原生目录选择器后退出。必须在导入 app（会拉起 flet
-    # 运行时与全部业务模块）之前短路，否则每次弹窗都要白白加载整个 GUI 框架，
-    # 导致面板打开明显卡顿。
-    if os.environ.get("VAULTGUARD_DIR_PICKER") == "1":
+    # 子进程模式必须在导入 app（会拉起 Flet）之前短路。
+    if os.environ.get("VAULTGUARD_HEALTH_WORKER") == "1":
+        from vaultguard.core.disk_health import run_health_worker
+        run_health_worker()
+    elif os.environ.get("VAULTGUARD_COPY_WORKER") == "1":
+        from vaultguard.core.copy_worker import run as run_copy_worker
+        run_copy_worker()
+    elif os.environ.get("VAULTGUARD_DIR_PICKER") == "1":
         from vaultguard.ui.dirpicker import run_picker_process
         run_picker_process()
     else:
