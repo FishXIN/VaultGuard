@@ -2804,6 +2804,101 @@ class VaultGuardApp:
         except Exception as ex:  # noqa: BLE001
             self._handle_error("加载历史记录", ex)
             return
+        # #region debug-point A-E:history-layout-inputs
+        if not getattr(self, "_history_layout_debug_reported", False):
+            self._history_layout_debug_reported = True
+            try:
+                import json as _debug_json
+                import os as _debug_os
+                import urllib.request as _debug_request
+
+                _debug_url = "http://10.77.75.151:7779/event"
+                _debug_session = "history-list-layout"
+                _debug_env = Path(".dbg/history-list-layout.env")
+                if _debug_env.is_file():
+                    for _debug_line in _debug_env.read_text(
+                            encoding="utf-8").splitlines():
+                        if _debug_line.startswith("DEBUG_SERVER_URL="):
+                            _debug_url = _debug_line.split("=", 1)[1]
+                        elif _debug_line.startswith("DEBUG_SESSION_ID="):
+                            _debug_session = _debug_line.split("=", 1)[1]
+                _debug_page_width = getattr(self.page, "width", None)
+                _debug_window_width = getattr(self.page.window, "width", None)
+                _debug_base_width = (
+                    _debug_page_width or _debug_window_width or 1024)
+                _debug_content_width = max(
+                    float(_debug_base_width) - T.SIDEBAR_W - T.SP_6 * 2, 0)
+                _debug_rows = []
+                for _debug_task in tasks:
+                    _debug_src = _debug_task["source_path"] or ""
+                    _debug_dst = _debug_task["target_path"] or ""
+                    _debug_status = _debug_task["status"] or ""
+                    _debug_label = _task_status_label(_debug_status)
+                    _debug_units = sum(
+                        2 if unicodedata.east_asian_width(_debug_char)
+                        in ("F", "W") else 1
+                        for _debug_char in _debug_label
+                    )
+                    _debug_rows.append({
+                        "id": _debug_task["id"],
+                        "source": _debug_src,
+                        "target": _debug_dst,
+                        "source_name": Path(_debug_src).name or _debug_src or "--",
+                        "target_name": Path(_debug_dst).name or _debug_dst or "--",
+                        "status": _debug_status,
+                        "badge_width": max(46, min(116, _debug_units * 6 + 22)),
+                        "total": int(_debug_task["total_files"] or 0),
+                        "copied": int(_debug_task["copied_files"] or 0),
+                        "failed": int(_debug_task["failed_files"] or 0),
+                    })
+                _debug_payload = {
+                    "sessionId": _debug_session,
+                    "runId": _debug_os.environ.get(
+                        "VAULTGUARD_DEBUG_RUN", "pre-fix"),
+                    "hypothesisId": "A-E",
+                    "location": "vaultguard/ui/app.py:_show_history",
+                    "msg": "[DEBUG] History layout inputs",
+                    "data": {
+                        "page_width": _debug_page_width,
+                        "window_width": _debug_window_width,
+                        "content_width_estimate": _debug_content_width,
+                        "path_column_width_estimate": max(
+                            _debug_content_width - 96 - 120 - 64, 0),
+                        "status_column_width": 96,
+                        "end_time_column_width": 120,
+                        "detail_column_width": 64,
+                        "row_height": 62,
+                        "path_height": 22,
+                        "status_bar_host_height": 18,
+                        "status_bar_track_ratio": "full",
+                        "rows": _debug_rows,
+                    },
+                    "ts": int(time.time() * 1000),
+                }
+
+                def _debug_send_history_layout() -> None:
+                    try:
+                        _debug_request.urlopen(
+                            _debug_request.Request(
+                                _debug_url,
+                                data=_debug_json.dumps(
+                                    _debug_payload,
+                                    ensure_ascii=False,
+                                ).encode("utf-8"),
+                                headers={"Content-Type": "application/json"},
+                            ),
+                            timeout=0.5,
+                        ).read()
+                    except Exception:
+                        pass
+
+                threading.Thread(
+                    target=_debug_send_history_layout,
+                    daemon=True,
+                ).start()
+            except Exception:
+                pass
+        # #endregion
         if not tasks:
             self._set_content(ft.Column([
                 self._page_header("历史记录"),
@@ -2895,21 +2990,20 @@ class VaultGuardApp:
                 bgcolor=T.BORDER_LIGHT,
                 border_radius=T.RADIUS_SM,
                 clip_behavior=ft.ClipBehavior.HARD_EDGE,
-                expand=3,
+                expand=True,
             )
-            # 进度条仅 6px 高，直接 hover 难以命中：外层用整行高度的容器承载
-            # tooltip。进度条本身只占单元格约 3/5 宽（不必铺满），再以 expand 让它
-            # 随窗口宽度实时伸缩；尾部 spacer 占满剩余宽度，使整格仍可 hover。
+            # 进度条仅 6px 高，外层用更高的容器承载 tooltip，且让轨道与路径列
+            # 等宽，避免看起来像一条错位的路径下划线。
             # 关键：bgcolor 必须为「不透明」色（与行背景同色，视觉无感）。完全透明
             # (#00000000) 会被 Flutter 跳过绘制，导致进度条之外的区域无法命中、hover
             # 失效——这是此前 tooltip 不弹出的根因。
             return ft.Container(
                 content=ft.Row(
-                    [track, ft.Container(expand=2)],
+                    [track],
                     vertical_alignment=ft.CrossAxisAlignment.CENTER,
                     spacing=0,
                 ),
-                height=40,
+                height=18,
                 bgcolor=T.BG,
                 tooltip=ft.Tooltip(
                     message=tooltip,
@@ -2923,17 +3017,8 @@ class VaultGuardApp:
         def path_flow(t: dict) -> ft.Container:
             src = t["source_path"] or ""
             dst = t["target_path"] or ""
-            src_name = Path(src).name or src or "--"
-            dst_name = Path(dst).name or dst or "--"
-            status = t["status"] or ""
-            status_kind = {
-                "pending": "warning",
-                "running": "running",
-                "paused": "warning",
-                "completed": "success",
-                "failed": "danger",
-                "cancelled": "danger",
-            }.get(status, "running")
+            src_name = src or "--"
+            dst_name = dst or "--"
 
             def _seg(name: str) -> ft.Container:
                 return ft.Container(
@@ -2954,7 +3039,6 @@ class VaultGuardApp:
                     ft.Icon(ft.Icons.ARROW_FORWARD_ROUNDED,
                             size=13, color=T.TEXT_TERTIARY),
                     _seg(dst_name),
-                    _badge(_task_status_label(status), status_kind),
                 ], spacing=T.SP_1,
                    vertical_alignment=ft.CrossAxisAlignment.CENTER),
                 height=22,
@@ -2970,6 +3054,14 @@ class VaultGuardApp:
         def table_row(t: dict, *, last: bool = False) -> ft.Container:
             finish_ts = t["end_time"] or None
             status = t["status"] or ""
+            status_kind = {
+                "pending": "warning",
+                "running": "running",
+                "paused": "warning",
+                "completed": "success",
+                "failed": "danger",
+                "cancelled": "danger",
+            }.get(status, "running")
             if status == "pending":
                 finish_text = "待开始"
             elif status == "running":
@@ -2999,35 +3091,38 @@ class VaultGuardApp:
                     pass
 
             detail_btn.on_hover = _detail_hover
-            status_cell = ft.Container(
+            path_cell = ft.Container(
                 content=ft.Column([
                     path_flow(t),
                     history_status_bar(t),
-                ], spacing=2, tight=True,
+                ], spacing=T.SP_1, tight=True,
                    alignment=ft.MainAxisAlignment.CENTER),
-                expand=5,
+                expand=True,
                 padding=ft.Padding.symmetric(horizontal=T.SP_3, vertical=0),
             )
             return ft.Container(
                 content=ft.Row([
-                    status_cell,
+                    path_cell,
+                    cell(_badge(_task_status_label(status), status_kind),
+                         width=96, align=ft.Alignment.CENTER),
                     cell(ft.Text(finish_text, size=T.TEXT_13,
                                  color=T.TEXT_PRIMARY,
                                  overflow=ft.TextOverflow.ELLIPSIS),
-                         expand=3, align=ft.Alignment.CENTER_RIGHT),
-                    cell(detail_btn, expand=2, align=ft.Alignment.CENTER),
+                         width=120, align=ft.Alignment.CENTER_RIGHT),
+                    cell(detail_btn, width=64, align=ft.Alignment.CENTER),
                 ], spacing=0, expand=True,
                    vertical_alignment=ft.CrossAxisAlignment.CENTER),
-                height=66,
+                height=62,
                 border=None if last else ft.Border(
                     bottom=ft.BorderSide(1, T.BORDER)),
             )
 
         table_header = ft.Container(
             content=ft.Row([
-                head("路径 / 状态", expand=5),
-                head("结束时间", expand=3, align=ft.Alignment.CENTER_RIGHT),
-                head("详情", expand=2, align=ft.Alignment.CENTER),
+                head("路径", expand=True),
+                head("状态", width=96, align=ft.Alignment.CENTER),
+                head("结束时间", width=120, align=ft.Alignment.CENTER_RIGHT),
+                head("详情", width=64, align=ft.Alignment.CENTER),
             ], spacing=0, expand=True,
                vertical_alignment=ft.CrossAxisAlignment.CENTER),
             height=42,

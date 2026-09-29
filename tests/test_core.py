@@ -638,6 +638,63 @@ def test_completed_task_dispatches_next_pending():
     print("PASS test_completed_task_dispatches_next_pending")
 
 
+def test_history_layout_separates_paths_and_status():
+    """历史列表保留盘符，并让状态与进度轨道各自对齐。"""
+    task = {
+        "id": 5,
+        "source_path": "G:/【字体】",
+        "target_path": "F:/【字体】",
+        "status": "failed",
+        "total_files": 1396,
+        "copied_files": 1394,
+        "failed_files": 2,
+        "skipped_files": 0,
+        "deleted_files": 0,
+        "end_time": int(time.time()),
+    }
+
+    class FakeService:
+        @staticmethod
+        def list_tasks():
+            return [task]
+
+    rendered = []
+    app = object.__new__(VaultGuardApp)
+    app.svc = FakeService()
+    app.page = type(
+        "FakePage",
+        (),
+        {"width": 720, "window": type("FakeWindow", (), {"width": 720})()},
+    )()
+    app._history_refreshing = False
+    app._history_layout_debug_reported = True
+    app._page_header = lambda *_args: None
+    app._set_content = rendered.append
+    app._safe = lambda _name, callback: callback
+
+    app._show_history(auto_refresh=False)
+
+    root = rendered[0]
+    table = root.controls[2].content
+    header_cells = table.controls[0].content.controls
+    assert len(header_cells) == 4
+    assert [cell.width for cell in header_cells[1:]] == [96, 120, 64]
+
+    row_cells = table.controls[1].controls[0].content.controls
+    assert len(row_cells) == 4
+    path_column = row_cells[0].content
+    path_controls = path_column.controls[0].content.controls
+    assert len(path_controls) == 4, "status badge must not occupy the path flow"
+    assert path_controls[1].content.value == "G:/【字体】"
+    assert path_controls[3].content.value == "F:/【字体】"
+
+    status_bar_host = path_column.controls[1]
+    assert status_bar_host.height == 18
+    assert len(status_bar_host.content.controls) == 1
+    assert status_bar_host.content.controls[0].expand
+    print("PASS test_history_layout_separates_paths_and_status")
+
+
 def test_delete_sync():
     """删除同步：源文件被删后，开启 delete_sync 应同步删除目标多余文件，
     并在 file_logs 中记录 delete 动作。"""
@@ -702,5 +759,6 @@ if __name__ == "__main__":
     test_pending_tasks_are_fifo()
     test_running_task_accepts_new_pending_task()
     test_completed_task_dispatches_next_pending()
+    test_history_layout_separates_paths_and_status()
     test_delete_sync()
     print("\n=== ALL TESTS PASSED ===")
