@@ -2797,6 +2797,43 @@ class VaultGuardApp:
         self._refresh_nav()
         self._show_history()
 
+    def _resume_history_task(self, task_id: int) -> None:
+        """从历史记录继续中断或失败任务，仅处理尚未安全完成的文件。"""
+        if self._running:
+            self._snack("已有备份任务正在执行")
+            return
+        try:
+            task = self.svc.db.get_task(task_id)
+            remaining = self.svc.db.count_undone_items(task_id)
+        except Exception as ex:  # noqa: BLE001
+            self._handle_error("读取历史备份任务", ex)
+            return
+        if task is None:
+            self._snack("未找到该备份任务", error=True)
+            return
+        if remaining == 0:
+            self._snack("该任务没有待传输文件")
+            self._show_history()
+            return
+        if task["status"] not in (
+                TaskStatus.RUNNING.value,
+                TaskStatus.PAUSED.value,
+                TaskStatus.FAILED.value):
+            self._snack("该任务当前不能继续")
+            return
+
+        self.current_task_id = task_id
+        try:
+            self._start_execution(
+                task["source_path"],
+                task["target_path"],
+                resume=True,
+            )
+        except Exception as ex:  # noqa: BLE001
+            self.current_task_id = None
+            self._release_execution()
+            self._handle_error("继续历史备份任务", ex)
+
     # ========== 历史记录页 ==========
     def _show_history(self, auto_refresh: bool = True) -> None:
         try:
@@ -2822,6 +2859,17 @@ class VaultGuardApp:
                 ),
             ], spacing=T.SP_5))
             return
+
+        remaining_by_task: dict[int, int] = {}
+        for task in tasks:
+            status = task["status"] or ""
+            if status not in ("running", "paused", "failed"):
+                continue
+            try:
+                remaining_by_task[int(task["id"])] = (
+                    self.svc.db.count_undone_items(int(task["id"])))
+            except Exception:
+                remaining_by_task[int(task["id"])] = 0
 
         def cell(control, *, width: Optional[int] = None,
                  expand: Optional[int] = None,
@@ -2895,21 +2943,20 @@ class VaultGuardApp:
                 bgcolor=T.BORDER_LIGHT,
                 border_radius=T.RADIUS_SM,
                 clip_behavior=ft.ClipBehavior.HARD_EDGE,
-                expand=3,
+                expand=True,
             )
-            # 进度条仅 6px 高，直接 hover 难以命中：外层用整行高度的容器承载
-            # tooltip。进度条本身只占单元格约 3/5 宽（不必铺满），再以 expand 让它
-            # 随窗口宽度实时伸缩；尾部 spacer 占满剩余宽度，使整格仍可 hover。
+            # 进度条仅 6px 高，外层用更高的容器承载 tooltip，且让轨道与路径列
+            # 等宽，避免看起来像一条错位的路径下划线。
             # 关键：bgcolor 必须为「不透明」色（与行背景同色，视觉无感）。完全透明
             # (#00000000) 会被 Flutter 跳过绘制，导致进度条之外的区域无法命中、hover
             # 失效——这是此前 tooltip 不弹出的根因。
             return ft.Container(
                 content=ft.Row(
-                    [track, ft.Container(expand=2)],
+                    [track],
                     vertical_alignment=ft.CrossAxisAlignment.CENTER,
                     spacing=0,
                 ),
-                height=40,
+                height=18,
                 bgcolor=T.BG,
                 tooltip=ft.Tooltip(
                     message=tooltip,
@@ -2923,17 +2970,8 @@ class VaultGuardApp:
         def path_flow(t: dict) -> ft.Container:
             src = t["source_path"] or ""
             dst = t["target_path"] or ""
-            src_name = Path(src).name or src or "--"
-            dst_name = Path(dst).name or dst or "--"
-            status = t["status"] or ""
-            status_kind = {
-                "pending": "warning",
-                "running": "running",
-                "paused": "warning",
-                "completed": "success",
-                "failed": "danger",
-                "cancelled": "danger",
-            }.get(status, "running")
+            src_name = src or "--"
+            dst_name = dst or "--"
 
             def _seg(name: str) -> ft.Container:
                 return ft.Container(
@@ -2954,7 +2992,6 @@ class VaultGuardApp:
                     ft.Icon(ft.Icons.ARROW_FORWARD_ROUNDED,
                             size=13, color=T.TEXT_TERTIARY),
                     _seg(dst_name),
-                    _badge(_task_status_label(status), status_kind),
                 ], spacing=T.SP_1,
                    vertical_alignment=ft.CrossAxisAlignment.CENTER),
                 height=22,
@@ -2970,6 +3007,14 @@ class VaultGuardApp:
         def table_row(t: dict, *, last: bool = False) -> ft.Container:
             finish_ts = t["end_time"] or None
             status = t["status"] or ""
+            status_kind = {
+                "pending": "warning",
+                "running": "running",
+                "paused": "warning",
+                "completed": "success",
+                "failed": "danger",
+                "cancelled": "danger",
+            }.get(status, "running")
             if status == "pending":
                 finish_text = "待开始"
             elif status == "running":
@@ -2999,35 +3044,91 @@ class VaultGuardApp:
                     pass
 
             detail_btn.on_hover = _detail_hover
-            status_cell = ft.Container(
+            remaining = remaining_by_task.get(int(t["id"]), 0)
+            can_resume = (
+                remaining > 0
+                and status in ("running", "paused", "failed")
+                and not (self._running and self.current_task_id == t["id"])
+            )
+            action_controls = []
+            if can_resume:
+                resume_label = "重试未完成文件" if status == "failed" else "继续未完成文件"
+                resume_icon = (
+                    ft.Icons.REFRESH_ROUNDED
+                    if status == "failed" else ft.Icons.PLAY_ARROW_ROUNDED
+                )
+                resume_btn = ft.Container(
+                    content=ft.Icon(resume_icon, color=T.PRIMARY, size=18),
+                    width=32,
+                    height=32,
+                    border_radius=T.RADIUS,
+                    alignment=ft.Alignment.CENTER,
+                    tooltip=resume_label,
+                    on_click=self._safe(
+                        resume_label,
+                        lambda e, tid=t["id"]: self._resume_history_task(tid),
+                    ),
+                )
+
+                def _resume_hover(e: ft.HoverEvent, c=resume_btn) -> None:
+                    try:
+                        c.bgcolor = (
+                            T.PRIMARY_BG
+                            if str(e.data).lower() == "true" else None
+                        )
+                        c.update()
+                    except Exception:
+                        pass
+
+                resume_btn.on_hover = _resume_hover
+                action_controls.append(resume_btn)
+            action_controls.append(detail_btn)
+            path_cell = ft.Container(
                 content=ft.Column([
                     path_flow(t),
                     history_status_bar(t),
-                ], spacing=2, tight=True,
+                ], spacing=T.SP_1, tight=True,
                    alignment=ft.MainAxisAlignment.CENTER),
-                expand=5,
+                expand=True,
                 padding=ft.Padding.symmetric(horizontal=T.SP_3, vertical=0),
             )
             return ft.Container(
                 content=ft.Row([
-                    status_cell,
+                    path_cell,
+                    ft.Container(
+                        content=_badge(_task_status_label(status), status_kind),
+                        width=96,
+                        height=62,
+                        alignment=ft.Alignment.CENTER,
+                    ),
                     cell(ft.Text(finish_text, size=T.TEXT_13,
                                  color=T.TEXT_PRIMARY,
                                  overflow=ft.TextOverflow.ELLIPSIS),
-                         expand=3, align=ft.Alignment.CENTER_RIGHT),
-                    cell(detail_btn, expand=2, align=ft.Alignment.CENTER),
+                         width=120, align=ft.Alignment.CENTER_RIGHT),
+                    cell(
+                        ft.Row(
+                            action_controls,
+                            spacing=T.SP_1,
+                            tight=True,
+                            alignment=ft.MainAxisAlignment.CENTER,
+                            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                        ),
+                        width=88,
+                        align=ft.Alignment.CENTER,
+                    ),
                 ], spacing=0, expand=True,
                    vertical_alignment=ft.CrossAxisAlignment.CENTER),
-                height=66,
+                height=62,
                 border=None if last else ft.Border(
                     bottom=ft.BorderSide(1, T.BORDER)),
             )
 
         table_header = ft.Container(
             content=ft.Row([
-                head("路径 / 状态", expand=5),
-                head("结束时间", expand=3, align=ft.Alignment.CENTER_RIGHT),
-                head("详情", expand=2, align=ft.Alignment.CENTER),
+                head("路径", expand=True),
+                head("状态", width=96, align=ft.Alignment.CENTER),
+                head("结束时间", width=120, align=ft.Alignment.CENTER_RIGHT),
+                head("操作", width=88, align=ft.Alignment.CENTER),
             ], spacing=0, expand=True,
                vertical_alignment=ft.CrossAxisAlignment.CENTER),
             height=42,

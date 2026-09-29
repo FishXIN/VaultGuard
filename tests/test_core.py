@@ -521,6 +521,38 @@ def test_failed_task_can_resume_only_undone_files():
     print("PASS test_failed_task_can_resume_only_undone_files")
 
 
+def test_small_file_results_are_batched():
+    """大量小文件应批量落库，且全部保持可恢复的逐文件记录。"""
+    d = tempfile.mkdtemp()
+    src, dst, data = Path(d)/"s", Path(d)/"t", Path(d)/"data"
+    setup_tree(src, {f"tiny/f{i:03}.txt": "x" for i in range(130)})
+    svc = BackupService(data)
+    diff = svc.compare(str(src), str(dst))
+    tid = svc.create_task(str(src), str(dst), diff)
+    reports = [
+        DiskHealth("source", str(src), "healthy", smart_status="Verified"),
+        DiskHealth("target", str(dst), "healthy", smart_status="Verified"),
+    ]
+    executor = svc.make_executor()
+    executor._isolated_copy = False
+
+    with patch.object(svc.db, "record_item_results",
+                      wraps=svc.db.record_item_results) as record, \
+            patch("vaultguard.core.executor.check_backup_disks",
+                  return_value=reports):
+        prog = executor.run(tid, str(src), str(dst))
+
+    assert prog.copied == 130 and prog.failed == 0, prog
+    assert record.call_count <= 3, record.call_count
+    assert len(svc.get_file_logs(tid)) == 130
+    assert all(
+        item["done"] for item in svc.db.get_pending_items(tid)
+    )
+    svc.close()
+    shutil.rmtree(d)
+    print("PASS test_small_file_results_are_batched")
+
+
 def test_pending_tasks_are_fifo():
     """待备份任务按创建顺序领取，并正确统计队列长度。"""
     d = tempfile.mkdtemp()
@@ -638,6 +670,113 @@ def test_completed_task_dispatches_next_pending():
     print("PASS test_completed_task_dispatches_next_pending")
 
 
+def test_history_layout_separates_paths_and_status():
+    """历史列表保留盘符，并让状态与进度轨道各自对齐。"""
+    task = {
+        "id": 5,
+        "source_path": "G:/【字体】",
+        "target_path": "F:/【字体】",
+        "status": "failed",
+        "total_files": 1396,
+        "copied_files": 1394,
+        "failed_files": 2,
+        "skipped_files": 0,
+        "deleted_files": 0,
+        "end_time": int(time.time()),
+    }
+
+    class FakeDatabase:
+        @staticmethod
+        def count_undone_items(_task_id):
+            return 2
+
+    class FakeService:
+        db = FakeDatabase()
+
+        @staticmethod
+        def list_tasks():
+            return [task]
+
+    rendered = []
+    app = object.__new__(VaultGuardApp)
+    app.svc = FakeService()
+    app.page = type(
+        "FakePage",
+        (),
+        {"width": 720, "window": type("FakeWindow", (), {"width": 720})()},
+    )()
+    app._history_refreshing = False
+    app._running = False
+    app.current_task_id = None
+    app._page_header = lambda *_args: None
+    app._set_content = rendered.append
+    app._safe = lambda _name, callback: callback
+
+    app._show_history(auto_refresh=False)
+
+    root = rendered[0]
+    table = root.controls[2].content
+    header_cells = table.controls[0].content.controls
+    assert len(header_cells) == 4
+    assert [cell.width for cell in header_cells[1:]] == [96, 120, 88]
+
+    row_cells = table.controls[1].controls[0].content.controls
+    assert len(row_cells) == 4
+    assert row_cells[1].width == 96
+    assert row_cells[1].height == 62
+    assert row_cells[1].alignment.x == 0
+    assert row_cells[1].alignment.y == 0
+    assert row_cells[3].width == 88
+    assert len(row_cells[3].content.controls) == 2
+    path_column = row_cells[0].content
+    path_controls = path_column.controls[0].content.controls
+    assert len(path_controls) == 4, "status badge must not occupy the path flow"
+    assert path_controls[1].content.value == "G:/【字体】"
+    assert path_controls[3].content.value == "F:/【字体】"
+
+    status_bar_host = path_column.controls[1]
+    assert status_bar_host.height == 18
+    assert len(status_bar_host.content.controls) == 1
+    assert status_bar_host.content.controls[0].expand
+    print("PASS test_history_layout_separates_paths_and_status")
+
+
+def test_history_retry_continues_only_undone_files():
+    """历史页重试按钮应直接启动原任务的断点续传。"""
+    task = {
+        "id": 7,
+        "source_path": "G:/source",
+        "target_path": "F:/target",
+        "status": TaskStatus.FAILED.value,
+    }
+
+    class FakeDatabase:
+        @staticmethod
+        def get_task(task_id):
+            return task if task_id == 7 else None
+
+        @staticmethod
+        def count_undone_items(task_id):
+            return 2 if task_id == 7 else 0
+
+    app = object.__new__(VaultGuardApp)
+    app.svc = type("FakeService", (), {"db": FakeDatabase()})()
+    app._running = False
+    app.current_task_id = None
+    app._snack = lambda *_args, **_kwargs: None
+    app._show_history = lambda: None
+    starts = []
+    app._start_execution = lambda src, dst, resume: starts.append(
+        (src, dst, resume)
+    )
+
+    app._resume_history_task(7)
+
+    assert app.current_task_id == 7
+    assert starts == [("G:/source", "F:/target", True)]
+    print("PASS test_history_retry_continues_only_undone_files")
+
+
 def test_delete_sync():
     """删除同步：源文件被删后，开启 delete_sync 应同步删除目标多余文件，
     并在 file_logs 中记录 delete 动作。"""
@@ -699,8 +838,11 @@ if __name__ == "__main__":
     test_rescue_mode_never_deletes_target_files()
     test_duplicate_task_execution_is_rejected()
     test_failed_task_can_resume_only_undone_files()
+    test_small_file_results_are_batched()
     test_pending_tasks_are_fifo()
     test_running_task_accepts_new_pending_task()
     test_completed_task_dispatches_next_pending()
+    test_history_layout_separates_paths_and_status()
+    test_history_retry_continues_only_undone_files()
     test_delete_sync()
     print("\n=== ALL TESTS PASSED ===")

@@ -2,7 +2,7 @@
 
 [![Release](https://img.shields.io/github/v/release/FishXIN/VaultGuard?display_name=tag)](https://github.com/FishXIN/VaultGuard/releases)
 [![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows-1f2328)](https://github.com/FishXIN/VaultGuard/releases)
-[![Tests](https://img.shields.io/badge/tests-19%20passed-2ea043)](https://github.com/FishXIN/VaultGuard)
+[![Tests](https://img.shields.io/badge/tests-22%20passed-2ea043)](https://github.com/FishXIN/VaultGuard)
 
 以「文件安全」为最高优先级的本地硬盘增量备份工具（Windows / macOS）。提供原生桌面应用体验。
 

@@ -196,6 +196,57 @@ class Database:
             self._conn.execute("UPDATE pending_items SET done=1 WHERE id=?", (item_id,))
             self._conn.commit()
 
+    def record_item_results(
+        self,
+        task_id: int,
+        results: list[tuple[int, bool, str, Action, str, int, bool]],
+    ) -> None:
+        """原子写入一批执行结果，降低大量小文件的 SQLite 提交开销。
+
+        每条结果为 ``(item_id, done, file_path, action, reason, size, verified)``。
+        ``done`` 只在文件已安全复制、删除或被明确跳过时置位；失败项保留为
+        未完成，供断点续传再次处理。
+        """
+        if not results:
+            return
+        with self._lock:
+            done_ids = [(item_id,) for item_id, done, *_ in results if done]
+            if done_ids:
+                self._conn.executemany(
+                    "UPDATE pending_items SET done=1 WHERE id=?",
+                    done_ids,
+                )
+            self._conn.executemany(
+                "INSERT INTO file_logs "
+                "(task_id, file_path, action, reason, size, verified, timestamp) "
+                "VALUES (?,?,?,?,?,?,?)",
+                [
+                    (
+                        task_id,
+                        file_path,
+                        action.value,
+                        reason,
+                        size,
+                        1 if verified else 0,
+                        int(time.time()),
+                    )
+                    for _item_id, _done, file_path, action, reason, size, verified
+                    in results
+                ],
+            )
+            self._conn.commit()
+
+    def count_undone_items(self, task_id: int) -> int:
+        """返回任务尚未安全完成的文件数，用于历史记录的继续/重试入口。"""
+        with self._lock:
+            cur = self._conn.execute(
+                "SELECT COUNT(*) AS count FROM pending_items "
+                "WHERE task_id=? AND done=0",
+                (task_id,),
+            )
+            row = cur.fetchone()
+            return int(row["count"] if row else 0)
+
     # ---------- 文件日志 ----------
     def add_file_log(self, task_id: int, file_path: str, action: Action,
                      reason: str, size: int, verified: bool) -> None:

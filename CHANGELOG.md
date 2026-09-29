@@ -6,6 +6,15 @@ The format is based on Keep a Changelog, with a pragmatic structure tailored for
 
 ## [Unreleased]
 
+## [1.5.0] - 2026-09-29
+
+### Added
+- Failed or interrupted history entries can now resume only their unfinished files.
+
+### Changed
+- History records now show full source and target paths in separate status, time, and action columns.
+- Large small-file backups batch SQLite result writes and throttle worker progress events for faster completion.
+
 ## [1.4.0] - 2026-09-29
 
 ### Added
