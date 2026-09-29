@@ -9,7 +9,9 @@ PY="$VENV/bin/python"
 PYINSTALLER="$VENV/bin/pyinstaller"
 RUNTIME_LOWER="fl""et"
 RUNTIME_TITLE="Fl""et"
+RUNTIME_VERSION="0.86.5"
 VIEW_ENV="F""LET_VIEW_PATH"
+PACK_HOME="$PWD/.pack_home"
 VERSION=$("$PY" - <<'PY'
 from vaultguard import __version__
 print(__version__.lstrip("v"))
@@ -26,14 +28,33 @@ fi
 [ -x "$PYINSTALLER" ] || { echo "未找到 $PYINSTALLER，请先创建虚拟环境并安装依赖"; exit 1; }
 
 echo "==> 检查 VaultGuard 桌面运行时依赖"
-"$PY" - <<'PY'
+rm -rf "$PACK_HOME"
+mkdir -p "$PACK_HOME"
+env HOME="$PACK_HOME" "$PY" - <<'PY'
+import importlib.metadata
 import importlib.util
 import subprocess
 import sys
 
-name = "fl" + "et"
-if importlib.util.find_spec(name) is None:
-    subprocess.check_call([sys.executable, "-m", "pip", "install", name + ">=0.85"])
+required = {
+    "flet": "0.86.5",
+    "flet-desktop": "0.86.5",
+}
+installed = {}
+for package in required:
+    try:
+        installed[package] = importlib.metadata.version(package)
+    except importlib.metadata.PackageNotFoundError:
+        installed[package] = None
+if installed != required:
+    subprocess.check_call([
+        sys.executable,
+        "-m",
+        "pip",
+        "install",
+        "flet==0.86.5",
+        "flet-desktop==0.86.5",
+    ])
 if importlib.util.find_spec("AppKit") is None:
     subprocess.check_call([
         sys.executable,
@@ -42,6 +63,8 @@ if importlib.util.find_spec("AppKit") is None:
         "install",
         "pyobjc-framework-Cocoa==10.3.2",
     ])
+import flet_desktop
+flet_desktop.ensure_client_cached()
 PY
 
 echo "==> 清理旧产物"
@@ -150,7 +173,7 @@ echo "==> 声明中文本地化（让系统原生面板/对话框跟随系统语
   /usr/libexec/PlistBuddy -c "Add :CFBundleAllowMixedLocalizations bool true" "$MAIN_PL"
 
 echo "==> 注入随包内置、改名为 VaultGuard 的窗口客户端（使应用自包含）"
-SRC=$(ls -d "$HOME"/."$RUNTIME_LOWER"/client/"$RUNTIME_LOWER"-desktop-full-* 2>/dev/null | head -1)/"$RUNTIME_TITLE".app
+SRC="$PACK_HOME/.$RUNTIME_LOWER/client/$RUNTIME_LOWER-desktop-full-$RUNTIME_VERSION/$RUNTIME_TITLE.app"
 [ -d "$SRC" ] || { echo "未找到内置窗口客户端缓存：$SRC"; exit 1; }
 
 CLIENT_DIR="$APP/Contents/Resources/client"
@@ -216,7 +239,7 @@ fi
 shasum -a 256 "$ZIP" | sed 's#dist/##' > "$CHECKSUMS"
 
 echo "==> 清理构建中间产物"
-rm -rf build VaultGuard.spec "$EMPTY_BIN"
+rm -rf build VaultGuard.spec "$EMPTY_BIN" "$PACK_HOME"
 if [ -d "dist/VaultGuard" ]; then
   mv "dist/VaultGuard" "dist/VaultGuard._hold"
   if codesign --verify --deep --strict "$APP" >/dev/null 2>&1; then

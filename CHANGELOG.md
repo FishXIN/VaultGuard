@@ -6,6 +6,14 @@ The format is based on Keep a Changelog, with a pragmatic structure tailored for
 
 ## [Unreleased]
 
+## [1.4.0] - 2026-09-29
+
+### Added
+- Persistent FIFO backup queue: create additional tasks while a backup is running, show queued tasks as pending, and automatically start the next task after completion.
+
+### Fixed
+- Packaged desktop builds now pin Flet 0.86.5 and use a compatible launcher path, preventing the Windows startup failure seen with mismatched runtimes.
+
 ## [1.3.1] - 2026-09-29
 
 ### Changed

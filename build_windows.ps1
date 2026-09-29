@@ -11,14 +11,19 @@ $PyInstaller = Join-Path $Venv "Scripts\pyinstaller.exe"
 
 if (-not (Test-Path $Py)) {
     Write-Host "==> 创建 Windows 虚拟环境"
-    py -3 -m venv $Venv
+    python -m venv $Venv
 }
 
 if (-not $SkipInstall) {
     Write-Host "==> 安装 Windows 打包依赖"
     & $Py -m pip install --upgrade pip
     & $Py -m pip install -r requirements.txt
-    & $Py -m pip install "flet>=0.85" "flet-desktop>=0.85" pyinstaller pillow
+    & $Py -m pip install "flet==0.86.5" "flet-desktop==0.86.5" pyinstaller pillow
+}
+
+$FletVersion = (& $Py -c "import importlib.metadata as m; print(m.version('flet'))").Trim()
+if ($FletVersion -ne "0.86.5") {
+    throw "Flet 版本不兼容：期望 0.86.5，实际 $FletVersion"
 }
 
 $Version = (& $Py -c "from vaultguard import __version__; print(__version__.lstrip('v'))").Trim()
