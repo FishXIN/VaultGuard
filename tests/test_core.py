@@ -521,6 +521,38 @@ def test_failed_task_can_resume_only_undone_files():
     print("PASS test_failed_task_can_resume_only_undone_files")
 
 
+def test_small_file_results_are_batched():
+    """大量小文件应批量落库，且全部保持可恢复的逐文件记录。"""
+    d = tempfile.mkdtemp()
+    src, dst, data = Path(d)/"s", Path(d)/"t", Path(d)/"data"
+    setup_tree(src, {f"tiny/f{i:03}.txt": "x" for i in range(130)})
+    svc = BackupService(data)
+    diff = svc.compare(str(src), str(dst))
+    tid = svc.create_task(str(src), str(dst), diff)
+    reports = [
+        DiskHealth("source", str(src), "healthy", smart_status="Verified"),
+        DiskHealth("target", str(dst), "healthy", smart_status="Verified"),
+    ]
+    executor = svc.make_executor()
+    executor._isolated_copy = False
+
+    with patch.object(svc.db, "record_item_results",
+                      wraps=svc.db.record_item_results) as record, \
+            patch("vaultguard.core.executor.check_backup_disks",
+                  return_value=reports):
+        prog = executor.run(tid, str(src), str(dst))
+
+    assert prog.copied == 130 and prog.failed == 0, prog
+    assert record.call_count <= 3, record.call_count
+    assert len(svc.get_file_logs(tid)) == 130
+    assert all(
+        item["done"] for item in svc.db.get_pending_items(tid)
+    )
+    svc.close()
+    shutil.rmtree(d)
+    print("PASS test_small_file_results_are_batched")
+
+
 def test_pending_tasks_are_fifo():
     """待备份任务按创建顺序领取，并正确统计队列长度。"""
     d = tempfile.mkdtemp()
@@ -653,7 +685,14 @@ def test_history_layout_separates_paths_and_status():
         "end_time": int(time.time()),
     }
 
+    class FakeDatabase:
+        @staticmethod
+        def count_undone_items(_task_id):
+            return 2
+
     class FakeService:
+        db = FakeDatabase()
+
         @staticmethod
         def list_tasks():
             return [task]
@@ -668,6 +707,8 @@ def test_history_layout_separates_paths_and_status():
     )()
     app._history_refreshing = False
     app._history_layout_debug_reported = True
+    app._running = False
+    app.current_task_id = None
     app._page_header = lambda *_args: None
     app._set_content = rendered.append
     app._safe = lambda _name, callback: callback
@@ -678,7 +719,7 @@ def test_history_layout_separates_paths_and_status():
     table = root.controls[2].content
     header_cells = table.controls[0].content.controls
     assert len(header_cells) == 4
-    assert [cell.width for cell in header_cells[1:]] == [96, 120, 64]
+    assert [cell.width for cell in header_cells[1:]] == [96, 120, 88]
 
     row_cells = table.controls[1].controls[0].content.controls
     assert len(row_cells) == 4
@@ -686,6 +727,8 @@ def test_history_layout_separates_paths_and_status():
     assert row_cells[1].height == 62
     assert row_cells[1].alignment.x == 0
     assert row_cells[1].alignment.y == 0
+    assert row_cells[3].width == 88
+    assert len(row_cells[3].content.controls) == 2
     path_column = row_cells[0].content
     path_controls = path_column.controls[0].content.controls
     assert len(path_controls) == 4, "status badge must not occupy the path flow"
@@ -697,6 +740,42 @@ def test_history_layout_separates_paths_and_status():
     assert len(status_bar_host.content.controls) == 1
     assert status_bar_host.content.controls[0].expand
     print("PASS test_history_layout_separates_paths_and_status")
+
+
+def test_history_retry_continues_only_undone_files():
+    """历史页重试按钮应直接启动原任务的断点续传。"""
+    task = {
+        "id": 7,
+        "source_path": "G:/source",
+        "target_path": "F:/target",
+        "status": TaskStatus.FAILED.value,
+    }
+
+    class FakeDatabase:
+        @staticmethod
+        def get_task(task_id):
+            return task if task_id == 7 else None
+
+        @staticmethod
+        def count_undone_items(task_id):
+            return 2 if task_id == 7 else 0
+
+    app = object.__new__(VaultGuardApp)
+    app.svc = type("FakeService", (), {"db": FakeDatabase()})()
+    app._running = False
+    app.current_task_id = None
+    app._snack = lambda *_args, **_kwargs: None
+    app._show_history = lambda: None
+    starts = []
+    app._start_execution = lambda src, dst, resume: starts.append(
+        (src, dst, resume)
+    )
+
+    app._resume_history_task(7)
+
+    assert app.current_task_id == 7
+    assert starts == [("G:/source", "F:/target", True)]
+    print("PASS test_history_retry_continues_only_undone_files")
 
 
 def test_delete_sync():
@@ -760,9 +839,11 @@ if __name__ == "__main__":
     test_rescue_mode_never_deletes_target_files()
     test_duplicate_task_execution_is_rejected()
     test_failed_task_can_resume_only_undone_files()
+    test_small_file_results_are_batched()
     test_pending_tasks_are_fifo()
     test_running_task_accepts_new_pending_task()
     test_completed_task_dispatches_next_pending()
     test_history_layout_separates_paths_and_status()
+    test_history_retry_continues_only_undone_files()
     test_delete_sync()
     print("\n=== ALL TESTS PASSED ===")

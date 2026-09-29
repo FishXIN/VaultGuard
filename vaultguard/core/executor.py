@@ -59,6 +59,8 @@ class BackupExecutor:
 
     _active_task_ids: set[int] = set()
     _active_task_lock = threading.Lock()
+    _RESULT_BATCH_SIZE = 64
+    _RESULT_BATCH_INTERVAL = 0.5
 
     def __init__(self, db: Database, settings: Settings) -> None:
         self.db = db
@@ -189,6 +191,7 @@ class BackupExecutor:
             timeout = max(0.1, float(self.settings.rescue_stall_timeout))
             last_activity = time.monotonic()
             last_copied = 0
+            worker_ready = False
             while True:
                 if self._cancel_event.is_set():
                     self._stop_copy_worker(force=True)
@@ -200,12 +203,13 @@ class BackupExecutor:
                     return False, False, "paused"
 
                 idle = time.monotonic() - last_activity
-                if idle >= timeout:
+                idle_limit = timeout if worker_ready else max(timeout, 3.0)
+                if idle >= idle_limit:
                     self._stop_copy_worker(force=True)
                     self._cleanup_partial(tmp)
                     return False, False, "error_stalled"
                 try:
-                    event = events.get(timeout=min(0.2, timeout - idle))
+                    event = events.get(timeout=min(0.2, idle_limit - idle))
                 except queue.Empty:
                     if progress_cb:
                         progress_cb(last_copied, time.monotonic() - last_activity)
@@ -218,8 +222,11 @@ class BackupExecutor:
                 if event.get("task_id") not in (None, task_id):
                     continue
                 event_type = event.get("type")
-                if event_type in ("started", "progress", "verify_progress"):
+                if event_type in (
+                        "ready", "started", "progress", "verify_progress"):
                     last_activity = time.monotonic()
+                    if event_type == "ready":
+                        worker_ready = True
                     if event_type == "progress":
                         last_copied = int(event.get("bytes", 0))
                         if progress_cb:
@@ -514,6 +521,10 @@ class BackupExecutor:
         self.db.update_task_status(task_id, TaskStatus.RUNNING)
         start = time.time()
         bytes_this_run = 0
+        pending_results: list[
+            tuple[int, bool, str, Action, str, int, bool]
+        ] = []
+        last_result_flush = time.monotonic()
 
         def emit_progress() -> None:
             elapsed = time.time() - start
@@ -525,11 +536,39 @@ class BackupExecutor:
             if progress_cb:
                 progress_cb(prog)
 
+        def flush_results(force: bool = False) -> None:
+            nonlocal last_result_flush
+            if not pending_results:
+                return
+            if (not force
+                    and len(pending_results) < self._RESULT_BATCH_SIZE
+                    and time.monotonic() - last_result_flush
+                    < self._RESULT_BATCH_INTERVAL):
+                return
+            self.db.record_item_results(task_id, pending_results)
+            pending_results.clear()
+            last_result_flush = time.monotonic()
+
+        def record_result(
+            item_id: int,
+            done: bool,
+            file_path: str,
+            action: Action,
+            reason: str,
+            size: int,
+            verified: bool = False,
+        ) -> None:
+            pending_results.append(
+                (item_id, done, file_path, action, reason, size, verified)
+            )
+            flush_results()
+
         for it in items:
             # 暂停处理
             self._pause_event.wait()
             # 取消处理
             if self._cancel_event.is_set():
+                flush_results(force=True)
                 self.db.update_task_status(
                     task_id, TaskStatus.PAUSED,
                     resume_point=f"{prog.processed_files}/{total_files}",
@@ -553,27 +592,26 @@ class BackupExecutor:
                 # 源盘异常时不依据可能不完整的扫描结果删除目标文件。
                 reason = "skipped_rescue_mode"
                 prog.skipped += 1
-                self.db.mark_item_done(it["id"])
-                self.db.add_file_log(
-                    task_id, rel, Action.SKIP, reason, it["size"], False)
+                record_result(
+                    it["id"], True, rel, Action.SKIP, reason, it["size"])
                 prog.processed_files += 1
             elif is_delete:
                 ok, reason = self._delete_one(dst_file)
                 if ok:
                     prog.deleted += 1
-                    self.db.mark_item_done(it["id"])
-                    self.db.add_file_log(task_id, rel, Action.DELETE, reason,
-                                         it["size"], False)
+                    record_result(
+                        it["id"], True, rel, Action.DELETE, reason, it["size"])
                 else:
                     prog.failed += 1
-                    self.db.add_file_log(task_id, rel, Action.FAIL, reason,
-                                         it["size"], False)
+                    record_result(
+                        it["id"], False, rel, Action.FAIL, reason, it["size"])
                 prog.processed_files += 1
             elif not self._isolated_copy and not src_file.exists():
                 # 源文件已不存在，记录失败但不中断
                 prog.failed += 1
-                self.db.add_file_log(task_id, rel, Action.FAIL, "error_src_missing",
-                                     it["size"], False)
+                record_result(
+                    it["id"], False, rel, Action.FAIL, "error_src_missing",
+                    it["size"])
                 prog.processed_files += 1
                 prog.transferred_bytes += it["size"]
                 bytes_this_run += it["size"]
@@ -598,6 +636,7 @@ class BackupExecutor:
                 ok, verified, reason = self._copy_with_retry(
                     src_file, dst_file, file_progress)
                 if reason == "cancelled":
+                    flush_results(force=True)
                     self.db.update_task_status(
                         task_id, TaskStatus.PAUSED,
                         resume_point=f"{prog.processed_files}/{total_files}",
@@ -609,13 +648,13 @@ class BackupExecutor:
                     return prog
                 if ok:
                     prog.copied += 1
-                    self.db.mark_item_done(it["id"])
-                    self.db.add_file_log(task_id, rel, Action.COPY, it["action"],
-                                         it["size"], verified)
+                    record_result(
+                        it["id"], True, rel, Action.COPY, it["action"],
+                        it["size"], verified)
                 else:
                     prog.failed += 1
-                    self.db.add_file_log(task_id, rel, Action.FAIL, reason,
-                                         it["size"], False)
+                    record_result(
+                        it["id"], False, rel, Action.FAIL, reason, it["size"])
                 prog.processed_files += 1
                 remaining_bytes = max(it["size"] - file_reported_bytes, 0)
                 prog.transferred_bytes += remaining_bytes
@@ -626,6 +665,7 @@ class BackupExecutor:
             emit_progress()
 
         # 收尾
+        flush_results(force=True)
         self._stop_copy_worker()
         prog.finished = True
         final_status = TaskStatus.COMPLETED if prog.failed == 0 else TaskStatus.FAILED

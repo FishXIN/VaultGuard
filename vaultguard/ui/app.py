@@ -2797,6 +2797,43 @@ class VaultGuardApp:
         self._refresh_nav()
         self._show_history()
 
+    def _resume_history_task(self, task_id: int) -> None:
+        """从历史记录继续中断或失败任务，仅处理尚未安全完成的文件。"""
+        if self._running:
+            self._snack("已有备份任务正在执行")
+            return
+        try:
+            task = self.svc.db.get_task(task_id)
+            remaining = self.svc.db.count_undone_items(task_id)
+        except Exception as ex:  # noqa: BLE001
+            self._handle_error("读取历史备份任务", ex)
+            return
+        if task is None:
+            self._snack("未找到该备份任务", error=True)
+            return
+        if remaining == 0:
+            self._snack("该任务没有待传输文件")
+            self._show_history()
+            return
+        if task["status"] not in (
+                TaskStatus.RUNNING.value,
+                TaskStatus.PAUSED.value,
+                TaskStatus.FAILED.value):
+            self._snack("该任务当前不能继续")
+            return
+
+        self.current_task_id = task_id
+        try:
+            self._start_execution(
+                task["source_path"],
+                task["target_path"],
+                resume=True,
+            )
+        except Exception as ex:  # noqa: BLE001
+            self.current_task_id = None
+            self._release_execution()
+            self._handle_error("继续历史备份任务", ex)
+
     # ========== 历史记录页 ==========
     def _show_history(self, auto_refresh: bool = True) -> None:
         try:
@@ -2863,10 +2900,10 @@ class VaultGuardApp:
                         "window_width": _debug_window_width,
                         "content_width_estimate": _debug_content_width,
                         "path_column_width_estimate": max(
-                            _debug_content_width - 96 - 120 - 64, 0),
+                            _debug_content_width - 96 - 120 - 88, 0),
                         "status_column_width": 96,
                         "end_time_column_width": 120,
-                        "detail_column_width": 64,
+                        "action_column_width": 88,
                         "row_height": 62,
                         "path_height": 22,
                         "status_bar_host_height": 18,
@@ -2917,6 +2954,17 @@ class VaultGuardApp:
                 ),
             ], spacing=T.SP_5))
             return
+
+        remaining_by_task: dict[int, int] = {}
+        for task in tasks:
+            status = task["status"] or ""
+            if status not in ("running", "paused", "failed"):
+                continue
+            try:
+                remaining_by_task[int(task["id"])] = (
+                    self.svc.db.count_undone_items(int(task["id"])))
+            except Exception:
+                remaining_by_task[int(task["id"])] = 0
 
         def cell(control, *, width: Optional[int] = None,
                  expand: Optional[int] = None,
@@ -3091,6 +3139,45 @@ class VaultGuardApp:
                     pass
 
             detail_btn.on_hover = _detail_hover
+            remaining = remaining_by_task.get(int(t["id"]), 0)
+            can_resume = (
+                remaining > 0
+                and status in ("running", "paused", "failed")
+                and not (self._running and self.current_task_id == t["id"])
+            )
+            action_controls = []
+            if can_resume:
+                resume_label = "重试未完成文件" if status == "failed" else "继续未完成文件"
+                resume_icon = (
+                    ft.Icons.REFRESH_ROUNDED
+                    if status == "failed" else ft.Icons.PLAY_ARROW_ROUNDED
+                )
+                resume_btn = ft.Container(
+                    content=ft.Icon(resume_icon, color=T.PRIMARY, size=18),
+                    width=32,
+                    height=32,
+                    border_radius=T.RADIUS,
+                    alignment=ft.Alignment.CENTER,
+                    tooltip=resume_label,
+                    on_click=self._safe(
+                        resume_label,
+                        lambda e, tid=t["id"]: self._resume_history_task(tid),
+                    ),
+                )
+
+                def _resume_hover(e: ft.HoverEvent, c=resume_btn) -> None:
+                    try:
+                        c.bgcolor = (
+                            T.PRIMARY_BG
+                            if str(e.data).lower() == "true" else None
+                        )
+                        c.update()
+                    except Exception:
+                        pass
+
+                resume_btn.on_hover = _resume_hover
+                action_controls.append(resume_btn)
+            action_controls.append(detail_btn)
             path_cell = ft.Container(
                 content=ft.Column([
                     path_flow(t),
@@ -3113,7 +3200,17 @@ class VaultGuardApp:
                                  color=T.TEXT_PRIMARY,
                                  overflow=ft.TextOverflow.ELLIPSIS),
                          width=120, align=ft.Alignment.CENTER_RIGHT),
-                    cell(detail_btn, width=64, align=ft.Alignment.CENTER),
+                    cell(
+                        ft.Row(
+                            action_controls,
+                            spacing=T.SP_1,
+                            tight=True,
+                            alignment=ft.MainAxisAlignment.CENTER,
+                            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                        ),
+                        width=88,
+                        align=ft.Alignment.CENTER,
+                    ),
                 ], spacing=0, expand=True,
                    vertical_alignment=ft.CrossAxisAlignment.CENTER),
                 height=62,
@@ -3126,7 +3223,7 @@ class VaultGuardApp:
                 head("路径", expand=True),
                 head("状态", width=96, align=ft.Alignment.CENTER),
                 head("结束时间", width=120, align=ft.Alignment.CENTER_RIGHT),
-                head("详情", width=64, align=ft.Alignment.CENTER),
+                head("操作", width=88, align=ft.Alignment.CENTER),
             ], spacing=0, expand=True,
                vertical_alignment=ft.CrossAxisAlignment.CENTER),
             height=42,
