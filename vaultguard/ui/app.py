@@ -3781,7 +3781,10 @@ def run() -> None:
             "flet_file": getattr(ft, "__file__", None),
             "flet_version": getattr(ft, "__version__", None),
             "has_app": hasattr(ft, "app"),
+            "app_callable": callable(getattr(ft, "app", None)),
             "has_run": hasattr(ft, "run"),
+            "run_callable": callable(getattr(ft, "run", None)),
+            "has_box_fit": hasattr(ft, "BoxFit"),
             "frozen": bool(getattr(sys, "frozen", False)),
         },
     )
@@ -3815,8 +3818,20 @@ def run() -> None:
     )
     # #endregion
 
+    launcher = getattr(ft, "run", None)
+    if callable(launcher):
+        # #region debug-point B:modern-launcher
+        _debug_report_runtime("B", "calling ft.run", {})
+        # #endregion
+        launcher(main)
+        return
+
     # #region debug-point B:legacy-launcher
-    _debug_report_runtime("B", "calling ft.app", {"has_app": hasattr(ft, "app")})
+    _debug_report_runtime(
+        "B",
+        "calling ft.app",
+        {"app_callable": callable(getattr(ft, "app", None))},
+    )
     # #endregion
     ft.app(target=main)
 

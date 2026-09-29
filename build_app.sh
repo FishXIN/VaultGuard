@@ -37,13 +37,13 @@ try:
     current_version = importlib.metadata.version(name)
 except importlib.metadata.PackageNotFoundError:
     current_version = None
-if current_version != "0.28.3":
+if current_version != "0.86.5":
     subprocess.check_call([
         sys.executable,
         "-m",
         "pip",
         "install",
-        name + "==0.28.3",
+        name + "==0.86.5",
     ])
 if importlib.util.find_spec("AppKit") is None:
     subprocess.check_call([

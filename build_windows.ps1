@@ -18,12 +18,12 @@ if (-not $SkipInstall) {
     Write-Host "==> 安装 Windows 打包依赖"
     & $Py -m pip install --upgrade pip
     & $Py -m pip install -r requirements.txt
-    & $Py -m pip install "flet==0.28.3" "flet-desktop==0.28.3" pyinstaller pillow
+    & $Py -m pip install "flet==0.86.5" "flet-desktop==0.86.5" pyinstaller pillow
 }
 
 $FletVersion = (& $Py -c "import importlib.metadata as m; print(m.version('flet'))").Trim()
-if ($FletVersion -ne "0.28.3") {
-    throw "Flet 版本不兼容：期望 0.28.3，实际 $FletVersion"
+if ($FletVersion -ne "0.86.5") {
+    throw "Flet 版本不兼容：期望 0.86.5，实际 $FletVersion"
 }
 
 $Version = (& $Py -c "from vaultguard import __version__; print(__version__.lstrip('v'))").Trim()
