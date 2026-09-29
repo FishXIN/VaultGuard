@@ -18,9 +18,16 @@ from vaultguard.core.executor import (
     TaskAlreadyRunningError,
     cleanup_temp_files,
 )
-from vaultguard.core.models import Action, DiffItem, DiffResult, TaskStatus
+from vaultguard.core.models import (
+    Action,
+    CopyProgress,
+    DiffItem,
+    DiffResult,
+    TaskStatus,
+)
 from vaultguard.core.scanner import compare, scan_directory
 from vaultguard.core.service import BackupService
+from vaultguard.ui.app import VaultGuardApp
 
 
 def setup_tree(root, files):
@@ -514,6 +521,123 @@ def test_failed_task_can_resume_only_undone_files():
     print("PASS test_failed_task_can_resume_only_undone_files")
 
 
+def test_pending_tasks_are_fifo():
+    """待备份任务按创建顺序领取，并正确统计队列长度。"""
+    d = tempfile.mkdtemp()
+    data = Path(d)/"data"
+    svc = BackupService(data)
+    diff = DiffResult(new_items=[
+        DiffItem("a.txt", Action.NEW, 1, 1.0),
+    ])
+    task_ids = [
+        svc.create_task(f"source-{i}", f"target-{i}", diff)
+        for i in range(3)
+    ]
+
+    first = svc.get_next_pending_task()
+    assert first is not None and first["id"] == task_ids[0]
+    assert svc.count_pending_tasks() == 3
+
+    svc.db.update_task_status(task_ids[0], TaskStatus.RUNNING)
+    second = svc.get_next_pending_task()
+    assert second is not None and second["id"] == task_ids[1]
+    assert svc.count_pending_tasks() == 2
+
+    svc.close()
+    shutil.rmtree(d)
+    print("PASS test_pending_tasks_are_fifo")
+
+
+def test_running_task_accepts_new_pending_task():
+    """已有任务运行时，新任务只入队且不能覆盖当前任务 ID。"""
+    d = tempfile.mkdtemp()
+    data = Path(d)/"data"
+    svc = BackupService(data)
+    diff = DiffResult(new_items=[
+        DiffItem("a.txt", Action.NEW, 1, 1.0),
+    ])
+    active_id = svc.create_task("source-active", "target-active", diff)
+    svc.db.update_task_status(active_id, TaskStatus.RUNNING)
+
+    app = VaultGuardApp.__new__(VaultGuardApp)
+    app.svc = svc
+    app._execution_start_lock = threading.Lock()
+    app._running = True
+    app.current_task_id = active_id
+    app.current_diff = diff
+    app._show_home = lambda: None
+    app._set_task_status = lambda status: None
+    messages = []
+    app._snack = lambda msg, error=False: messages.append((msg, error))
+    app._handle_error = lambda context, ex: (_ for _ in ()).throw(ex)
+
+    app._confirm_backup("source-queued", "target-queued", diff)
+
+    queued = svc.get_next_pending_task()
+    assert queued is not None
+    assert queued["source_path"] == "source-queued"
+    assert app.current_task_id == active_id
+    assert app._running
+    assert any("已加入待备份队列" in msg for msg, _error in messages)
+
+    svc.close()
+    shutil.rmtree(d)
+    print("PASS test_running_task_accepts_new_pending_task")
+
+
+def test_completed_task_dispatches_next_pending():
+    """当前任务结束后应自动领取队列中的下一个任务。"""
+    d = tempfile.mkdtemp()
+    data = Path(d)/"data"
+    svc = BackupService(data)
+    diff = DiffResult(new_items=[
+        DiffItem("a.txt", Action.NEW, 1, 1.0),
+    ])
+    active_id = svc.create_task("source-active", "target-active", diff)
+    queued_id = svc.create_task("source-queued", "target-queued", diff)
+    svc.db.update_task_status(active_id, TaskStatus.COMPLETED)
+
+    app = VaultGuardApp.__new__(VaultGuardApp)
+    app.svc = svc
+    app._execution_start_lock = threading.Lock()
+    app._running = True
+    app.current_task_id = active_id
+    app._task_stage = "backup"
+    app.executor = object()
+    app._set_task_status = lambda status: None
+    app._show_result = lambda prog: None
+    app._show_home = lambda: None
+    messages = []
+    app._snack = lambda msg, error=False: messages.append((msg, error))
+    starts = []
+
+    def fake_start(src, dst, resume, already_claimed=False,
+                   show_progress=True):
+        starts.append((src, dst, resume, already_claimed, show_progress))
+
+    app._start_execution = fake_start
+    app._handle_error = lambda context, ex: (_ for _ in ()).throw(ex)
+
+    app._on_finished(
+        active_id,
+        CopyProgress(total_files=1, copied=1, finished=True),
+    )
+
+    assert app.current_task_id == queued_id
+    assert app._running
+    assert starts == [
+        ("source-queued", "target-queued", True, True, True),
+    ]
+    assert any(
+        f"已自动开始任务 #{queued_id}" in msg
+        for msg, _error in messages
+    )
+
+    svc.close()
+    shutil.rmtree(d)
+    print("PASS test_completed_task_dispatches_next_pending")
+
+
 def test_delete_sync():
     """删除同步：源文件被删后，开启 delete_sync 应同步删除目标多余文件，
     并在 file_logs 中记录 delete 动作。"""
@@ -575,5 +699,8 @@ if __name__ == "__main__":
     test_rescue_mode_never_deletes_target_files()
     test_duplicate_task_execution_is_rejected()
     test_failed_task_can_resume_only_undone_files()
+    test_pending_tasks_are_fifo()
+    test_running_task_accepts_new_pending_task()
+    test_completed_task_dispatches_next_pending()
     test_delete_sync()
     print("\n=== ALL TESTS PASSED ===")

@@ -111,6 +111,12 @@ class BackupService:
     def list_tasks(self, limit: int = 100):
         return self.db.list_tasks(limit)
 
+    def get_next_pending_task(self):
+        return self.db.get_next_pending_task()
+
+    def count_pending_tasks(self) -> int:
+        return self.db.count_pending_tasks()
+
     def get_file_logs(self, task_id: int):
         return self.db.get_file_logs(task_id)
 

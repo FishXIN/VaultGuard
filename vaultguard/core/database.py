@@ -143,6 +143,26 @@ class Database:
             )
             return cur.fetchall()
 
+    def get_next_pending_task(self) -> Optional[sqlite3.Row]:
+        """按创建顺序返回下一个待执行任务。"""
+        with self._lock:
+            cur = self._conn.execute(
+                "SELECT * FROM backup_tasks WHERE status=? "
+                "ORDER BY id ASC LIMIT 1",
+                (TaskStatus.PENDING.value,),
+            )
+            return cur.fetchone()
+
+    def count_pending_tasks(self) -> int:
+        """返回等待执行的任务数量。"""
+        with self._lock:
+            cur = self._conn.execute(
+                "SELECT COUNT(*) AS count FROM backup_tasks WHERE status=?",
+                (TaskStatus.PENDING.value,),
+            )
+            row = cur.fetchone()
+            return int(row["count"] if row else 0)
+
     def find_resumable_task(self, source: str, target: str) -> Optional[sqlite3.Row]:
         """查找同源/目标且仍有未完成文件的任务，用于断点续传。"""
         with self._lock:

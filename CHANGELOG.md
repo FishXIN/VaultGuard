@@ -6,6 +6,9 @@ The format is based on Keep a Changelog, with a pragmatic structure tailored for
 
 ## [Unreleased]
 
+### Added
+- Persistent FIFO backup queue: create additional tasks while a backup is running, show queued tasks as pending, and automatically start the next task after completion.
+
 ## [1.3.1] - 2026-09-29
 
 ### Changed

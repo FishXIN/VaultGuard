@@ -22,7 +22,12 @@ from typing import Callable, Optional
 
 from vaultguard import __version__
 from vaultguard.core.disk_health import DiskHealth, format_health_summary
-from vaultguard.core.models import CompareProgress, CopyProgress, DiffResult
+from vaultguard.core.models import (
+    CompareProgress,
+    CopyProgress,
+    DiffResult,
+    TaskStatus,
+)
 from vaultguard.core.service import BackupService
 from . import tokens as T
 from .error_reporter import ErrorReporter
@@ -257,7 +262,7 @@ def _badge(label: str, kind: str = "running") -> ft.Container:
 def _task_status_label(status: str) -> str:
     """将任务内部状态转换为界面展示文案。"""
     return {
-        "pending": "等待中",
+        "pending": "待备份",
         "running": "传输中",
         "paused": "已暂停",
         "completed": "已完成",
@@ -538,6 +543,7 @@ class VaultGuardApp:
         self._compare_refreshing = False
         self._latest_copy_prog: Optional[CopyProgress] = None
         self._copy_refreshing = False
+        self._copy_run_token = 0
         self._history_refreshing = False
         self._last_disk_health: list[DiskHealth] = []
 
@@ -547,6 +553,7 @@ class VaultGuardApp:
         self._build_layout()
         self._reset_task_home()
         self._start_update_check()
+        self._dispatch_next_pending()
 
     # ---------- 页面基础 ----------
     def _setup_page(self) -> None:
@@ -848,7 +855,7 @@ class VaultGuardApp:
             self._set_content(control)
 
     def _show_task(self) -> None:
-        if self._task_content is None:
+        if self._task_content is None or self._task_stage == "home":
             self._show_home()
             return
         self._set_content(self._task_content)
@@ -856,8 +863,59 @@ class VaultGuardApp:
     def _reset_task_home(self) -> None:
         self.current_diff = None
         self._task_stage = "home"
-        self._set_task_status(None)
+        self._set_task_status("running" if self._running else None)
         self._show_home()
+
+    def _show_active_progress(self) -> None:
+        if not self._running or self.current_task_id is None:
+            self._snack("当前没有正在执行的备份任务")
+            return
+        self._show_progress_view()
+        self._update_progress(self.current_task_id)
+
+    def _queue_status_banner(self, pending_count: int) -> ft.Container:
+        if self._running:
+            active_text = (
+                f"任务 #{self.current_task_id} 正在备份"
+                if self.current_task_id is not None else "备份任务正在执行"
+            )
+            queue_text = (
+                f" · 另有 {pending_count} 个待备份"
+                if pending_count else ""
+            )
+            button_text = "查看进度"
+            button_action = self._show_active_progress
+        else:
+            active_text = f"{pending_count} 个任务待备份"
+            queue_text = ""
+            button_text = "开始备份"
+            button_action = self._dispatch_next_pending
+        return ft.Container(
+            content=ft.Row([
+                ft.Icon(ft.Icons.PLAY_ARROW_ROUNDED,
+                        size=18, color=T.PRIMARY),
+                ft.Text(
+                    active_text + queue_text,
+                    size=T.TEXT_13,
+                    color=T.TEXT_PRIMARY,
+                    expand=True,
+                    overflow=ft.TextOverflow.ELLIPSIS,
+                ),
+                _default_button(
+                    button_text,
+                    on_click=self._safe(
+                        button_text,
+                        lambda e, action=button_action: action(),
+                    ),
+                ),
+            ], spacing=T.SP_3,
+               vertical_alignment=ft.CrossAxisAlignment.CENTER),
+            bgcolor=T.PRIMARY_BG,
+            border=ft.Border.all(1, T.PRIMARY),
+            border_radius=T.RADIUS_MD,
+            padding=ft.Padding.symmetric(
+                vertical=T.SP_3, horizontal=T.SP_4),
+        )
 
     # ---------- 版本更新检测 ----------
     def _start_update_check(self) -> None:
@@ -1356,9 +1414,17 @@ class VaultGuardApp:
         self._compare_btn_holder = ft.Container()
         self._refresh_compare_btn()
 
-        self._set_task_content(ft.Column([
+        controls = [
             self._page_header("你好，今天备份了嘛？"),
             ft.Container(height=1, bgcolor=T.BORDER_LIGHT),
+        ]
+        try:
+            pending_count = self.svc.count_pending_tasks()
+        except Exception:
+            pending_count = 0
+        if self._running or pending_count:
+            controls.append(self._queue_status_banner(pending_count))
+        controls.append(
             ft.Column([
                 ft.Column([
                     self._path_group("源目录", self.src_field, True),
@@ -1369,7 +1435,9 @@ class VaultGuardApp:
                     self._compare_btn_holder,
                 ], alignment=ft.MainAxisAlignment.END),
             ], spacing=T.SP_3, tight=True),
-        ], spacing=T.SP_5, scroll=ft.ScrollMode.AUTO))
+        )
+        self._set_task_content(
+            ft.Column(controls, spacing=T.SP_5, scroll=ft.ScrollMode.AUTO))
 
     def _on_home_path_change(self, is_source: bool):
         def _handler(e: ft.ControlEvent) -> None:
@@ -1527,6 +1595,10 @@ class VaultGuardApp:
 
             resumable = self.svc.find_resumable(src, dst)
             if resumable:
+                if (self._running
+                        and self.current_task_id == resumable["id"]):
+                    self._snack("该备份任务正在执行")
+                    return
                 undone = self.svc.db.get_pending_items(
                     resumable["id"], only_undone=True)
                 if undone:
@@ -2234,8 +2306,11 @@ class VaultGuardApp:
             self.page.update()
 
     def _cf_confirm_btn(self) -> ft.Container:
+        queued = self._running
         return _primary_button(
-            "确认备份", icon=ft.Icons.PLAY_ARROW_ROUNDED,
+            "加入待备份" if queued else "确认备份",
+            icon=(ft.Icons.PLAYLIST_ADD_ROUNDED
+                  if queued else ft.Icons.PLAY_ARROW_ROUNDED),
             disabled=not self._cf_selected,
             on_click=self._safe("确认备份", lambda e: self._cf_do_backup()),
         )
@@ -2254,16 +2329,32 @@ class VaultGuardApp:
         self._confirm_backup(self._cf_src, self._cf_dst, filtered)
 
     def _confirm_backup(self, src: str, dst: str, diff: DiffResult) -> None:
-        if not self._claim_execution():
-            self._snack("备份任务已在执行")
-            return
         try:
             task_id = self.svc.create_task(src, dst, diff)
-            self.current_task_id = task_id
-            self._start_execution(src, dst, resume=False, already_claimed=True)
         except Exception as ex:  # noqa: BLE001
-            self._release_execution()
             self._handle_error("创建备份任务", ex)
+            return
+
+        if not self._running:
+            if self._dispatch_next_pending(show_progress=True):
+                if self.current_task_id != task_id:
+                    self._snack(f"任务 #{task_id} 已加入待备份队列")
+                return
+
+        if self._running:
+            try:
+                pending_count = self.svc.count_pending_tasks()
+            except Exception:
+                pending_count = 1
+            self.current_diff = None
+            self._show_home()
+            self._set_task_status("running")
+            self._snack(
+                f"任务 #{task_id} 已加入待备份队列"
+                f"（共 {pending_count} 个）"
+            )
+            return
+        self._snack(f"任务 #{task_id} 已保存为待备份", error=True)
 
     # ========== 任务进行页 ==========
     def _show_progress_view(self) -> None:
@@ -2307,6 +2398,18 @@ class VaultGuardApp:
             "继续" if paused else "暂停",
             icon=ft.Icons.PLAY_ARROW_ROUNDED if paused else ft.Icons.PAUSE_ROUNDED,
             on_click=self._safe("暂停/继续", lambda e: self._toggle_pause()))
+        self.btn_new_task = ft.Container(
+            content=ft.Icon(ft.Icons.ADD_ROUNDED,
+                            size=17, color=T.TEXT_PRIMARY),
+            width=32,
+            height=32,
+            border=ft.Border.all(1, T.BORDER),
+            border_radius=T.RADIUS,
+            alignment=ft.Alignment.CENTER,
+            tooltip="新增备份任务",
+            on_click=self._safe(
+                "新增备份任务", lambda e: self._reset_task_home()),
+        )
         self.btn_cancel = _default_button(
             "中断", icon=ft.Icons.STOP_ROUNDED,
             on_click=self._safe("中断备份", lambda e: self._cancel_task()),
@@ -2324,7 +2427,7 @@ class VaultGuardApp:
                                vertical_alignment=ft.CrossAxisAlignment.CENTER),
                         self.lbl_speed,
                     ], spacing=T.SP_1, expand=True),
-                    ft.Row([self.btn_pause, self.btn_cancel],
+                    ft.Row([self.btn_new_task, self.btn_pause, self.btn_cancel],
                            spacing=T.SP_2),
                 ], vertical_alignment=ft.CrossAxisAlignment.START),
                 ft.Container(height=T.SP_2),
@@ -2336,6 +2439,7 @@ class VaultGuardApp:
                 ], spacing=T.SP_2),
             ),
         ], spacing=T.SP_5, expand=True))
+        self._update_progress(self.current_task_id)
 
     def _claim_execution(self) -> bool:
         with self._execution_start_lock:
@@ -2348,29 +2452,83 @@ class VaultGuardApp:
         with self._execution_start_lock:
             self._running = False
 
+    def _dispatch_next_pending(self, show_progress: bool = True) -> bool:
+        """领取并启动最早创建的待备份任务。"""
+        if not self._claim_execution():
+            return False
+        try:
+            task = self.svc.get_next_pending_task()
+        except Exception as ex:  # noqa: BLE001
+            self._release_execution()
+            self._handle_error("读取待备份队列", ex)
+            return False
+        if task is None:
+            self._release_execution()
+            return False
+
+        self.current_task_id = int(task["id"])
+        try:
+            self._start_execution(
+                task["source_path"],
+                task["target_path"],
+                resume=True,
+                already_claimed=True,
+                show_progress=show_progress,
+            )
+        except Exception as ex:  # noqa: BLE001
+            self._release_execution()
+            try:
+                self.svc.db.update_task_status(
+                    self.current_task_id, TaskStatus.PENDING)
+            except Exception as status_ex:  # noqa: BLE001
+                self._record_error("恢复待备份任务状态", status_ex)
+            self.current_task_id = None
+            self._handle_error("启动待备份任务", ex)
+            return False
+        return True
+
     def _start_execution(
         self,
         src: str,
         dst: str,
         resume: bool,
         already_claimed: bool = False,
+        show_progress: bool = True,
     ) -> None:
         if not already_claimed and not self._claim_execution():
             self._snack("备份任务已在执行")
             return
-        self._show_progress_view()
-        self._set_task_status("running")
-        self.executor = self.svc.make_executor()
         task_id = self.current_task_id
+        if task_id is None:
+            self._release_execution()
+            raise RuntimeError("缺少待执行的任务 ID")
+
+        self.svc.db.update_task_status(task_id, TaskStatus.RUNNING)
+        self._latest_copy_prog = None
+        self._copy_refreshing = True
+        self._copy_run_token += 1
+        run_token = self._copy_run_token
+        executor = self.svc.make_executor()
+        self.executor = executor
+
+        if show_progress:
+            self._show_progress_view()
+        self._set_task_status("running")
 
         def progress_cb(prog: CopyProgress):
-            self._latest_copy_prog = prog
+            if self.current_task_id == task_id:
+                self._latest_copy_prog = prog
 
         def health_cb(reports: list[DiskHealth]) -> None:
+            if self.current_task_id != task_id:
+                return
             self._last_disk_health = reports
             summary = format_health_summary(reports)
 
             def show_health() -> None:
+                if (self.current_task_id != task_id
+                        or self._task_stage != "backup"):
+                    return
                 self.lbl_stat.value = "硬盘检查完成"
                 self.lbl_file.value = summary
                 self.page.update()
@@ -2378,40 +2536,49 @@ class VaultGuardApp:
             self._run_ui(show_health)
 
         async def refresher():
-            while self._copy_refreshing:
-                self._update_progress()
+            while (self._copy_refreshing
+                   and self._copy_run_token == run_token):
+                self._update_progress(task_id)
                 await asyncio.sleep(1 / 15)
-            self._update_progress()
+            self._update_progress(task_id)
 
         def work():
-            self._latest_copy_prog = None
-            self._copy_refreshing = True
             self._start_refresher(refresher, "备份进度刷新")
             try:
-                prog = self.executor.run(task_id, src, dst, resume=resume,
-                                         progress_cb=progress_cb,
-                                         health_cb=health_cb)
+                prog = executor.run(
+                    task_id,
+                    src,
+                    dst,
+                    resume=resume,
+                    progress_cb=progress_cb,
+                    health_cb=health_cb,
+                )
                 try:
                     self.svc._write_text_log(
                         task_id,
                         src,
                         dst,
                         prog,
-                        health_reports=self.executor.disk_health_reports,
+                        health_reports=executor.disk_health_reports,
                     )
                 except Exception as log_ex:  # noqa: BLE001
                     self._record_error("写入备份日志失败", log_ex)
-                self._release_execution()
-                self._copy_refreshing = False
-                self._run_ui(lambda: self._on_finished(prog))
+                if self._copy_run_token == run_token:
+                    self._copy_refreshing = False
+                self._run_ui(lambda: self._on_finished(task_id, prog))
             except Exception as ex:
-                self._release_execution()
-                self._copy_refreshing = False
-                self._handle_error("执行备份", ex)
+                if self._copy_run_token == run_token:
+                    self._copy_refreshing = False
+                self._run_ui(
+                    lambda err=ex: self._on_execution_error(task_id, err))
 
         threading.Thread(target=work, daemon=True).start()
 
-    def _update_progress(self) -> None:
+    def _update_progress(self, task_id: Optional[int] = None) -> None:
+        if (task_id is not None
+                and (self.current_task_id != task_id
+                     or self._task_stage != "backup")):
+            return
         prog = self._latest_copy_prog
         if prog is None:
             return
@@ -2474,10 +2641,16 @@ class VaultGuardApp:
         icon_ctrl, label_ctrl = row.controls[0], row.controls[1]
         if self.executor.is_paused:
             self.executor.resume()
+            if self.current_task_id is not None:
+                self.svc.db.update_task_status(
+                    self.current_task_id, TaskStatus.RUNNING)
             label_ctrl.value = "暂停"
             icon_ctrl.name = ft.Icons.PAUSE_ROUNDED
         else:
             self.executor.pause()
+            if self.current_task_id is not None:
+                self.svc.db.update_task_status(
+                    self.current_task_id, TaskStatus.PAUSED)
             label_ctrl.value = "继续"
             icon_ctrl.name = ft.Icons.PLAY_ARROW_ROUNDED
         self.page.update()
@@ -2488,14 +2661,55 @@ class VaultGuardApp:
             self.btn_cancel.on_click = None
             self._snack("已请求中断，断点已保存，可稍后从断点继续")
 
-    def _on_finished(self, prog: CopyProgress) -> None:
-        self._set_task_status("done")
+    def _on_finished(self, task_id: int, prog: CopyProgress) -> None:
+        showing_progress = (
+            self.current_task_id == task_id
+            and self._task_stage == "backup"
+        )
+        self._release_execution()
+        self.executor = None
+
         if prog.finished:
             extra = f"，删除 {prog.deleted}" if prog.deleted else ""
             msg = (f"备份完成：复制 {prog.copied}{extra}，失败 {prog.failed}，"
                    f"共 {prog.total_files} 个项。")
+            if self._dispatch_next_pending(show_progress=showing_progress):
+                next_id = self.current_task_id
+                self._snack(
+                    f"{msg} 已自动开始任务 #{next_id}。",
+                    error=prog.failed > 0,
+                )
+                if not showing_progress and self._task_stage == "home":
+                    self._show_home()
+                return
             self._snack(msg, error=prog.failed > 0)
-        self._show_result(prog)
+
+        self.current_task_id = None
+        self._set_task_status("done")
+        if showing_progress:
+            self._show_result(prog)
+        elif self._task_stage == "home":
+            self._show_home()
+        elif self._task_stage == "confirm":
+            self._cf_confirm_holder.content = self._cf_confirm_btn()
+            self.page.update()
+
+    def _on_execution_error(self, task_id: int, ex: Exception) -> None:
+        if self.current_task_id == task_id:
+            self.current_task_id = None
+            self.executor = None
+            self._release_execution()
+        try:
+            self.svc.db.update_task_status(task_id, TaskStatus.FAILED)
+        except Exception as status_ex:  # noqa: BLE001
+            self._record_error("更新失败任务状态", status_ex)
+        self._set_task_status("done")
+        if self._task_stage == "home":
+            self._show_home()
+        elif self._task_stage == "confirm":
+            self._cf_confirm_holder.content = self._cf_confirm_btn()
+            self.page.update()
+        self._handle_error("执行备份", ex)
 
     def _show_result(self, prog: CopyProgress) -> None:
         self._task_stage = "result"
@@ -2632,6 +2846,7 @@ class VaultGuardApp:
             )
 
         def history_status_bar(t: dict) -> ft.Container:
+            status = t["status"] or ""
             total = int(t["total_files"] or 0)
             completed = int(t["copied_files"] or 0)
             failed = int(t["failed_files"] or 0)
@@ -2645,10 +2860,11 @@ class VaultGuardApp:
             transferring = max(total - completed - failed - deleted, 0)
             deleted_color = (T.DANGER_BG_DEEP if hasattr(T, "DANGER_BG_DEEP")
                              else "#F76560")
+            remaining_color = T.WARNING if status == "pending" else T.PRIMARY
             segments = [
                 (completed, T.SUCCESS),
                 (deleted, deleted_color),
-                (transferring, T.PRIMARY),
+                (transferring, remaining_color),
                 (failed, T.DANGER),
             ]
             bars = [
@@ -2664,7 +2880,7 @@ class VaultGuardApp:
                 ("复制", completed),
                 ("删除", deleted),
                 ("跳过", skipped),
-                ("传输中", transferring),
+                ("待备份" if status == "pending" else "传输中", transferring),
                 ("失败", failed),
             ]
             tip_lines = [f"{label} {count} 个"
@@ -2709,6 +2925,15 @@ class VaultGuardApp:
             dst = t["target_path"] or ""
             src_name = Path(src).name or src or "--"
             dst_name = Path(dst).name or dst or "--"
+            status = t["status"] or ""
+            status_kind = {
+                "pending": "warning",
+                "running": "running",
+                "paused": "warning",
+                "completed": "success",
+                "failed": "danger",
+                "cancelled": "danger",
+            }.get(status, "running")
 
             def _seg(name: str) -> ft.Container:
                 return ft.Container(
@@ -2729,9 +2954,10 @@ class VaultGuardApp:
                     ft.Icon(ft.Icons.ARROW_FORWARD_ROUNDED,
                             size=13, color=T.TEXT_TERTIARY),
                     _seg(dst_name),
+                    _badge(_task_status_label(status), status_kind),
                 ], spacing=T.SP_1,
                    vertical_alignment=ft.CrossAxisAlignment.CENTER),
-                height=18,
+                height=22,
                 tooltip=ft.Tooltip(
                     message=f"源目录：{src or '--'}\n目标目录：{dst or '--'}",
                     padding=ft.Padding.symmetric(horizontal=10, vertical=8),
@@ -2743,10 +2969,18 @@ class VaultGuardApp:
 
         def table_row(t: dict, *, last: bool = False) -> ft.Container:
             finish_ts = t["end_time"] or None
-            finish_text = (
-                fmt_relative_time(finish_ts)
-                if finish_ts else "进行中"
-            )
+            status = t["status"] or ""
+            if status == "pending":
+                finish_text = "待开始"
+            elif status == "running":
+                finish_text = "进行中"
+            elif status == "paused":
+                finish_text = "已暂停"
+            else:
+                finish_text = (
+                    fmt_relative_time(finish_ts)
+                    if finish_ts else "--"
+                )
             detail_btn = ft.Container(
                     content=_nav_svg_icon(_NAV_SVG_DOCUMENT, T.PRIMARY, 18),
                     width=32, height=32,
