@@ -27,13 +27,24 @@ fi
 
 echo "==> 检查 VaultGuard 桌面运行时依赖"
 "$PY" - <<'PY'
+import importlib.metadata
 import importlib.util
 import subprocess
 import sys
 
 name = "fl" + "et"
-if importlib.util.find_spec(name) is None:
-    subprocess.check_call([sys.executable, "-m", "pip", "install", name + ">=0.85"])
+try:
+    current_version = importlib.metadata.version(name)
+except importlib.metadata.PackageNotFoundError:
+    current_version = None
+if current_version != "0.28.3":
+    subprocess.check_call([
+        sys.executable,
+        "-m",
+        "pip",
+        "install",
+        name + "==0.28.3",
+    ])
 if importlib.util.find_spec("AppKit") is None:
     subprocess.check_call([
         sys.executable,
