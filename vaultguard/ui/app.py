@@ -3103,8 +3103,12 @@ class VaultGuardApp:
             return ft.Container(
                 content=ft.Row([
                     path_cell,
-                    cell(_badge(_task_status_label(status), status_kind),
-                         width=96, align=ft.Alignment.CENTER),
+                    ft.Container(
+                        content=_badge(_task_status_label(status), status_kind),
+                        width=96,
+                        height=62,
+                        alignment=ft.Alignment.CENTER,
+                    ),
                     cell(ft.Text(finish_text, size=T.TEXT_13,
                                  color=T.TEXT_PRIMARY,
                                  overflow=ft.TextOverflow.ELLIPSIS),

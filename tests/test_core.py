@@ -682,6 +682,10 @@ def test_history_layout_separates_paths_and_status():
 
     row_cells = table.controls[1].controls[0].content.controls
     assert len(row_cells) == 4
+    assert row_cells[1].width == 96
+    assert row_cells[1].height == 62
+    assert row_cells[1].alignment.x == 0
+    assert row_cells[1].alignment.y == 0
     path_column = row_cells[0].content
     path_controls = path_column.controls[0].content.controls
     assert len(path_controls) == 4, "status badge must not occupy the path flow"
