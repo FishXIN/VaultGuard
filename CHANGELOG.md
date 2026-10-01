@@ -6,6 +6,11 @@ The format is based on Keep a Changelog, with a pragmatic structure tailored for
 
 ## [Unreleased]
 
+## [1.5.1] - 2026-10-01
+
+### Fixed
+- History auto-refresh now preserves the existing control tree when task data is unchanged, preventing repeated icon redraws and visible flicker.
+
 ### Documentation
 - Reorganized the GitHub project homepage with clearer downloads, platform support, safety guarantees, architecture, testing, and roadmap sections.
 - Added MIT licensing, security policy, support guide, code of conduct, localized issue forms, and core CI workflow.

@@ -1,4 +1,5 @@
 """核心逻辑自动化测试：断点续传、失败隔离、原子性、mtime 回写。"""
+import asyncio
 import os
 import plistlib
 import shutil
@@ -778,6 +779,141 @@ def test_history_retry_continues_only_undone_files():
     print("PASS test_history_retry_continues_only_undone_files")
 
 
+def test_history_refresh_skips_unchanged_control_tree():
+    """活动任务数据未变化时，不应每秒重建历史列表与图标。"""
+    task = {
+        "id": 8,
+        "source_path": "G:/source",
+        "target_path": "F:/target",
+        "status": TaskStatus.RUNNING.value,
+        "total_files": 10,
+        "copied_files": 3,
+        "failed_files": 0,
+        "skipped_files": 0,
+        "deleted_files": 0,
+        "end_time": None,
+    }
+
+    class FakeDatabase:
+        @staticmethod
+        def count_undone_items(_task_id):
+            return 7
+
+    class FakeService:
+        db = FakeDatabase()
+        list_calls = 0
+
+        @classmethod
+        def list_tasks(cls):
+            cls.list_calls += 1
+            return [task]
+
+    rendered = []
+    refreshers = []
+    app = object.__new__(VaultGuardApp)
+    app.svc = FakeService()
+    app.page = type(
+        "FakePage",
+        (),
+        {"width": 1024, "window": type("FakeWindow", (), {"width": 1024})()},
+    )()
+    app._nav_index = 1
+    app._history_refreshing = False
+    app._running = False
+    app.current_task_id = None
+    app._page_header = lambda *_args: None
+    app._set_content = rendered.append
+    app._safe = lambda _name, callback: callback
+    app._record_error = lambda _context, ex: (_ for _ in ()).throw(ex)
+    app._start_refresher = lambda factory, _name: refreshers.append(factory)
+
+    app._show_history(auto_refresh=True)
+    assert len(refreshers) == 1
+
+    sleeps = {"count": 0}
+
+    async def stop_after_three_ticks(_seconds):
+        sleeps["count"] += 1
+        if sleeps["count"] == 4:
+            app._nav_index = 0
+
+    with patch("vaultguard.ui.app.asyncio.sleep",
+               side_effect=stop_after_three_ticks):
+        asyncio.run(refreshers[0]())
+
+    assert FakeService.list_calls == 4
+    assert len(rendered) == 1, "unchanged polling must preserve the control tree"
+    print("PASS test_history_refresh_skips_unchanged_control_tree")
+
+
+def test_history_refresh_rebuilds_after_data_change():
+    """活动任务状态或计数变化后，历史列表仍应及时更新。"""
+    task = {
+        "id": 9,
+        "source_path": "G:/source",
+        "target_path": "F:/target",
+        "status": TaskStatus.RUNNING.value,
+        "total_files": 10,
+        "copied_files": 3,
+        "failed_files": 0,
+        "skipped_files": 0,
+        "deleted_files": 0,
+        "end_time": None,
+    }
+
+    class FakeDatabase:
+        @staticmethod
+        def count_undone_items(_task_id):
+            return 7
+
+    class FakeService:
+        db = FakeDatabase()
+        list_calls = 0
+
+        @classmethod
+        def list_tasks(cls):
+            cls.list_calls += 1
+            current = dict(task)
+            if cls.list_calls >= 3:
+                current["copied_files"] = 4
+            return [current]
+
+    rendered = []
+    refreshers = []
+    app = object.__new__(VaultGuardApp)
+    app.svc = FakeService()
+    app.page = type(
+        "FakePage",
+        (),
+        {"width": 1024, "window": type("FakeWindow", (), {"width": 1024})()},
+    )()
+    app._nav_index = 1
+    app._history_refreshing = False
+    app._running = False
+    app.current_task_id = None
+    app._page_header = lambda *_args: None
+    app._set_content = rendered.append
+    app._safe = lambda _name, callback: callback
+    app._record_error = lambda _context, ex: (_ for _ in ()).throw(ex)
+    app._start_refresher = lambda factory, _name: refreshers.append(factory)
+
+    app._show_history(auto_refresh=True)
+
+    sleeps = {"count": 0}
+
+    async def stop_after_change(_seconds):
+        sleeps["count"] += 1
+        if sleeps["count"] == 3:
+            app._nav_index = 0
+
+    with patch("vaultguard.ui.app.asyncio.sleep",
+               side_effect=stop_after_change):
+        asyncio.run(refreshers[0]())
+
+    assert len(rendered) == 2, "changed task data must rebuild the list once"
+    print("PASS test_history_refresh_rebuilds_after_data_change")
+
+
 def test_delete_sync():
     """删除同步：源文件被删后，开启 delete_sync 应同步删除目标多余文件，
     并在 file_logs 中记录 delete 动作。"""
@@ -853,5 +989,7 @@ if __name__ == "__main__":
     test_completed_task_dispatches_next_pending()
     test_history_layout_separates_paths_and_status()
     test_history_retry_continues_only_undone_files()
+    test_history_refresh_skips_unchanged_control_tree()
+    test_history_refresh_rebuilds_after_data_change()
     test_delete_sync()
     print("\n=== ALL TESTS PASSED ===")

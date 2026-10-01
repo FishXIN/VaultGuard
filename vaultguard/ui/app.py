@@ -2871,6 +2871,35 @@ class VaultGuardApp:
             except Exception:
                 remaining_by_task[int(task["id"])] = 0
 
+        def history_snapshot(
+            rows,
+            remaining: dict[int, int],
+        ) -> tuple:
+            snapshot = []
+            for task in rows:
+                task_id = int(task["id"])
+                try:
+                    deleted = int(task["deleted_files"] or 0)
+                except (KeyError, IndexError):
+                    deleted = 0
+                snapshot.append((
+                    task_id,
+                    task["source_path"] or "",
+                    task["target_path"] or "",
+                    task["status"] or "",
+                    int(task["total_files"] or 0),
+                    int(task["copied_files"] or 0),
+                    int(task["skipped_files"] or 0),
+                    int(task["failed_files"] or 0),
+                    deleted,
+                    task["end_time"] or None,
+                    remaining.get(task_id, 0),
+                ))
+            return tuple(snapshot)
+
+        self._history_render_snapshot = history_snapshot(
+            tasks, remaining_by_task)
+
         def cell(control, *, width: Optional[int] = None,
                  expand: Optional[int] = None,
                  align=ft.Alignment.CENTER_LEFT) -> ft.Container:
@@ -3156,7 +3185,6 @@ class VaultGuardApp:
             ft.Container(height=1, bgcolor=T.BORDER_LIGHT),
             history_panel,
         ], spacing=T.SP_5, expand=True))
-
         has_active_task = any(
             t["status"] in ("pending", "running", "paused") for t in tasks)
         if not has_active_task:
@@ -3169,6 +3197,25 @@ class VaultGuardApp:
                     await asyncio.sleep(1)
                     if self._nav_index != 1:
                         break
+                    try:
+                        latest_tasks = self.svc.list_tasks()
+                        latest_remaining: dict[int, int] = {}
+                        for task in latest_tasks:
+                            task_status = task["status"] or ""
+                            if task_status not in (
+                                    "running", "paused", "failed"):
+                                continue
+                            task_id = int(task["id"])
+                            latest_remaining[task_id] = (
+                                self.svc.db.count_undone_items(task_id))
+                        latest_snapshot = history_snapshot(
+                            latest_tasks, latest_remaining)
+                    except Exception as ex:  # noqa: BLE001
+                        self._record_error("刷新历史记录", ex)
+                        continue
+                    if latest_snapshot == getattr(
+                            self, "_history_render_snapshot", None):
+                        continue
                     self._show_history(auto_refresh=False)
 
             self._start_refresher(refresh_history, "历史记录刷新")
