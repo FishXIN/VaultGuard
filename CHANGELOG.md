@@ -6,6 +6,10 @@ The format is based on Keep a Changelog, with a pragmatic structure tailored for
 
 ## [Unreleased]
 
+### Documentation
+- Reorganized the GitHub project homepage with clearer downloads, platform support, safety guarantees, architecture, testing, and roadmap sections.
+- Added MIT licensing, security policy, support guide, code of conduct, localized issue forms, and core CI workflow.
+
 ## [1.5.0] - 2026-09-29
 
 ### Added

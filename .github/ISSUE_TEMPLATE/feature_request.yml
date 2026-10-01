@@ -1,5 +1,5 @@
-name: Feature Request
-description: Suggest a user-facing improvement for VaultGuard
+name: 功能建议
+description: 提议一个明确、可验证的 VaultGuard 改进
 title: "[Feature] "
 labels:
   - type: feature
@@ -8,35 +8,51 @@ body:
   - type: markdown
     attributes:
       value: |
-        Describe the problem first, then the proposed solution.
+        请先描述实际问题，再说明建议方案。与文件安全相关的功能请同时说明失败和中断场景。
   - type: textarea
     id: problem
     attributes:
-      label: Problem Statement
-      description: What is not working well today?
-      placeholder: I want VaultGuard to...
+      label: 当前问题
+      description: 现有流程在哪里不够好？
+      placeholder: 当我备份……时，目前需要……
     validations:
       required: true
   - type: textarea
     id: proposal
     attributes:
-      label: Proposed Solution
-      placeholder: The app could add...
+      label: 建议方案
+      placeholder: 可以增加……
     validations:
       required: true
   - type: textarea
     id: alternatives
     attributes:
-      label: Alternatives Considered
-      placeholder: Other approaches you considered
+      label: 已考虑的替代方案
+      placeholder: 还尝试过……
   - type: dropdown
     id: area
     attributes:
-      label: Area
+      label: 功能范围
       options:
-        - UI
-        - Core Backup
-        - Update / Release
+        - 核心备份
+        - 界面与交互
+        - 性能
+        - 数据安全
+        - 更新与发布
         - Windows
         - macOS
-        - Other
+        - 其他
+    validations:
+      required: true
+  - type: textarea
+    id: safety
+    attributes:
+      label: 数据安全与异常场景
+      description: 文件被占用、磁盘断开、应用中断时应如何处理？
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: 提交前确认
+      options:
+        - label: 我已搜索现有 Issue，没有发现相同建议
+          required: true

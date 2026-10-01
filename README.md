@@ -1,131 +1,193 @@
-# VaultGuard · 本地硬盘增量备份
+<div align="center">
+  <img src="assets/icon.png" width="112" alt="VaultGuard icon">
+  <h1>VaultGuard · 备份了嘛</h1>
+  <p>面向 macOS 与 Windows 的本地硬盘增量备份工具，以文件安全、断点续传和故障隔离为核心。</p>
 
-[![Release](https://img.shields.io/github/v/release/FishXIN/VaultGuard?display_name=tag)](https://github.com/FishXIN/VaultGuard/releases)
-[![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows-1f2328)](https://github.com/FishXIN/VaultGuard/releases)
-[![Tests](https://img.shields.io/badge/tests-22%20passed-2ea043)](https://github.com/FishXIN/VaultGuard)
+  [![Release](https://img.shields.io/github/v/release/FishXIN/VaultGuard?display_name=tag&style=flat-square)](https://github.com/FishXIN/VaultGuard/releases/latest)
+  [![Core Tests](https://img.shields.io/github/actions/workflow/status/FishXIN/VaultGuard/core-tests.yml?branch=main&label=core%20tests&style=flat-square)](https://github.com/FishXIN/VaultGuard/actions/workflows/core-tests.yml)
+  [![Windows Build](https://img.shields.io/github/actions/workflow/status/FishXIN/VaultGuard/build-windows.yml?label=windows%20build&style=flat-square)](https://github.com/FishXIN/VaultGuard/actions/workflows/build-windows.yml)
+  [![Platforms](https://img.shields.io/badge/platform-macOS%20%7C%20Windows-1f2328?style=flat-square)](#平台支持)
+  [![License](https://img.shields.io/github/license/FishXIN/VaultGuard?style=flat-square)](LICENSE)
+</div>
 
-以「文件安全」为最高优先级的本地硬盘增量备份工具（Windows / macOS）。提供原生桌面应用体验。
+---
 
-通过对比文件修改时间识别需备份文件，**先选清单、确认后再执行**，已备份且未变更的文件自动跳过；支持断点续传，全程可视化进度与完整日志。
+VaultGuard 会扫描源目录与目标目录，只处理新增或更新的文件。每次备份都先生成清单供用户确认，再以临时文件写入、校验和原子替换完成复制。任务中断或个别文件失败后，可以从历史记录继续，仅重试尚未完成的文件。
 
-## 发布与更新
+## 下载
 
-- 最新版本与安装包：见 [Releases](https://github.com/FishXIN/VaultGuard/releases)
-- 版本变更记录：见 [CHANGELOG.md](./CHANGELOG.md)
-- 问题反馈与需求建议：见 [Issues](https://github.com/FishXIN/VaultGuard/issues)
+前往 [最新版本](https://github.com/FishXIN/VaultGuard/releases/latest) 下载对应平台安装包：
 
-当前采用较规范的 GitHub 发布治理：
+| 平台 | 架构 | 下载文件 | 状态 |
+| --- | --- | --- | --- |
+| macOS | Apple Silicon / arm64 | `VaultGuard-*-arm64.zip` | 支持 |
+| Windows | x64 | `VaultGuard-*-windows-x64.zip` | 支持 |
+| macOS Intel | x64 | 暂未提供 | 计划中 |
+| Windows ARM | arm64 | 暂未提供 | 计划中 |
 
-- 使用语义化版本号：`v主版本.次版本.修订版本`
-- Release Notes 按类别组织：新增、修复、UI、打包、文档
-- Issue / PR 使用标签治理，便于筛选功能、缺陷、优先级和发布归属
-- 默认只在明确发布时创建新版本，不把日常源码同步误当成 Release
+每个 Release 同时提供 `checksums.txt`，可使用 SHA-256 校验下载完整性。
 
-## 核心特性
+## 为什么选择 VaultGuard
 
-- **文件安全第一**：原子写入（临时文件 + 校验 + 重命名）、覆盖前不破坏旧文件、完整性校验、失败隔离、断电安全清理、默认绝不删除目标文件。
-- **增量优先**：只处理新增/更新的文件，已备份未变更文件绝不重复拷贝；复制后回写源 mtime 保证下次对比准确。
-- **先选后执行**：对比完成后展示清单（新增/更新/跳过 + 预计传输），用户确认后才执行。
-- **串行任务队列**：备份进行中仍可继续创建任务；待备份任务持久化保存，当前任务完成后按创建顺序自动执行。
-- **可中断·可续传**：任务可暂停/中断，失败任务也可只重试未完成文件；同一任务禁止并发执行，避免重复复制和统计错乱。
-- **可追溯**：每次任务与每个文件操作写入 SQLite，并输出可读文本日志。
-- **备份前硬盘检查**：每次执行前读取系统 SMART/健康状态；只查询元数据，不启动自检、不扫描扇区、不写入测试数据。目标盘明确故障或只读时停止备份，无法读取 SMART 时提示但不误拦截。
-- **卡死隔离与坏盘抢救**：所有文件在独立复制进程中执行，单文件 30 秒无进展会被隔离并继续后续文件；源盘异常或无法确认健康时额外启用小文件优先并禁用删除同步，尽可能保全可读数据。
+| 能力 | 说明 |
+| --- | --- |
+| 增量备份 | 只复制新增和更新文件，未变化文件自动跳过 |
+| 文件安全 | `.bak.tmp` 临时写入、`fsync`、大小校验、原子替换 |
+| 断点续传 | 暂停、取消、意外中断后只处理未完成文件 |
+| 失败隔离 | 单个文件失败不阻塞后续文件，历史记录可直接重试 |
+| 任务队列 | 多个备份任务按创建顺序持久化、串行执行 |
+| 坏盘抢救 | 异常源盘优先小文件，单文件卡住后自动跳过 |
+| 只读健康检查 | 仅读取磁盘状态，不运行自检、扇区扫描或写入测速 |
+| 完整记录 | SQLite 保存任务和文件结果，同时输出可读文本日志 |
 
-## 首次打开（绕过系统安全提示）
+## 工作流程
 
-本应用未购买 Apple / Windows 付费代码签名证书，因此从网上下载后，系统会在**首次打开**时弹出安全提示。这是正常的来源校验机制，按下列步骤放行**一次**即可，之后永久不再提示。
+```mermaid
+flowchart LR
+    A[选择源目录与目标目录] --> B[扫描并生成差异清单]
+    B --> C[用户确认待备份文件]
+    C --> D[只读磁盘健康检查]
+    D --> E[写入 .bak.tmp]
+    E --> F[大小或 Hash 校验]
+    F --> G[原子替换目标文件]
+    G --> H[批量提交进度与日志]
+    H --> I{还有未完成项?}
+    I -- 是 --> E
+    I -- 否 --> J[任务完成]
+    I -- 中断或失败 --> K[历史记录继续 / 重试]
+    K --> E
+```
 
-### macOS
+## 安全设计
 
-> 双击若提示「无法打开，因为 Apple 无法检查其是否包含恶意软件」：
+- **覆盖前不破坏旧文件**：新内容先写入同目录临时文件，校验完成后再原子替换。
+- **断电可恢复**：数据库只把安全完成的文件标记为完成；未提交的小批次会在下次继续时重新复制。
+- **失败项保留**：权限不足、文件占用或 I/O 错误不会被误标为成功。
+- **删除默认关闭**：默认不删除目标端额外文件；坏盘抢救模式会强制禁用删除同步。
+- **无破坏性磁盘检查**：不会执行 SMART 自检、修复、坏道扫描或写入测速。
+- **单任务互斥**：同一任务禁止重复并发执行，避免重复复制与统计错乱。
 
-- 方式 A（推荐）：在「备份了嘛.app」上**右键 → 打开**，在弹窗中再次点击「打开」。
-- 方式 B：打开「系统设置 → 隐私与安全性」，下滑找到被拦截的提示，点击「仍要打开」。
-- 方式 C（命令行一键去除隔离标记）：
+更完整的漏洞报告方式见 [SECURITY.md](SECURITY.md)。
+
+## 平台支持
+
+| 能力 | macOS | Windows |
+| --- | :---: | :---: |
+| 图形界面 | ✅ | ✅ |
+| 命令行 | ✅ | ✅ |
+| 原生目录选择器 | ✅ | ✅ |
+| 磁盘状态查询 | `diskutil info` | `Get-Disk` |
+| 自动更新 | ✅ | ✅ |
+| 代码签名 / 公证 | 暂无 | 暂无 |
+
+> 当前安装包未购买 Apple Developer ID 或 Windows 代码签名证书，首次打开时可能出现系统安全提示。
+
+### macOS 首次打开
+
+1. 在“备份了嘛.app”上右键，选择“打开”。
+2. 若仍被拦截，进入“系统设置 → 隐私与安全性”，点击“仍要打开”。
+3. 若系统提示应用已损坏，可移除下载隔离标记：
 
 ```bash
 xattr -dr com.apple.quarantine "/Applications/备份了嘛.app"
 ```
 
-> 若提示「应用已损坏，应移到废纸篓」，同样执行上面的 `xattr` 命令即可恢复。
+### Windows 首次打开
 
-### Windows
+出现 SmartScreen 提示时，点击“更多信息 → 仍要运行”。
 
-> 双击若出现蓝色「Windows 已保护你的电脑 (SmartScreen)」窗口：
+## 从源码运行
 
-- 点击窗口中的「更多信息」→ 出现「仍要运行」按钮 → 点击即可运行。
-
-## 快速开始
-
-### 方式一：双击启动（macOS）
-
-双击 `启动VaultGuard.command`，首次运行会自动创建虚拟环境并安装依赖。
-
-### 方式二：命令行
+要求 Python 3.12。
 
 ```bash
+git clone https://github.com/FishXIN/VaultGuard.git
+cd VaultGuard
+
 python3 -m venv .venv
 .venv/bin/pip install -r requirements.txt
+.venv/bin/pip install "flet==0.86.5"
 
-# 图形界面
+# macOS / Linux
 .venv/bin/python main.py
 
-# 命令行（核心逻辑）
-.venv/bin/python cli.py compare <源目录> <目标目录>        # 只对比，打印清单
-.venv/bin/python cli.py backup  <源目录> <目标目录>        # 对比并执行（会询问确认）
-.venv/bin/python cli.py backup  <源目录> <目标目录> -y     # 跳过确认
-.venv/bin/python cli.py backup  <源目录> <目标目录> --resume  # 从断点继续
-.venv/bin/python cli.py history                            # 查看历史任务
+# Windows PowerShell
+.\.venv\Scripts\python.exe main.py
 ```
 
-## 项目结构
+### 命令行
 
-```
-VaultGuard/
-├── main.py                  # 图形界面入口
-├── cli.py                   # 命令行入口
-├── build_app.sh             # 构建 macOS 桌面应用（dist/VaultGuard.app）
-├── requirements.txt
-├── vaultguard/
-│   ├── core/                # 核心逻辑
-│   │   ├── models.py        # 数据模型
-│   │   ├── config.py        # 设置与数据目录
-│   │   ├── scanner.py       # 模块1：扫描与对比引擎
-│   │   ├── executor.py      # 模块2+3：原子复制 + 断点续传
-│   │   ├── copy_worker.py   # 异常源盘隔离复制进程
-│   │   ├── disk_health.py   # 只读硬盘健康检查
-│   │   ├── database.py      # 模块4：SQLite 日志/任务持久化
-│   │   └── service.py       # 服务层（编排 CLI/GUI 共用）
-│   └── ui/                  # 模块5+6：VaultGuard 桌面图形界面
-│       ├── app.py
-│       └── helpers.py
-└── tests/
-    └── test_core.py         # 核心逻辑自动化测试
+```bash
+python cli.py compare <源目录> <目标目录>
+python cli.py backup <源目录> <目标目录>
+python cli.py backup <源目录> <目标目录> -y
+python cli.py backup <源目录> <目标目录> --resume
+python cli.py history
 ```
 
 ## 数据位置
 
-配置、SQLite 数据库与文本日志存储于平台标准目录：
+| 平台 | 默认数据目录 |
+| --- | --- |
+| macOS | `~/Library/Application Support/VaultGuard` |
+| Windows | `%APPDATA%\VaultGuard` |
 
-- macOS：`~/Library/Application Support/VaultGuard`
-- Windows：`%APPDATA%\VaultGuard`
+可使用环境变量 `VAULTGUARD_DATA_DIR` 覆盖。目录中包含配置、SQLite 数据库、任务日志和错误报告。
 
-可通过环境变量 `VAULTGUARD_DATA_DIR` 覆盖。
+## 项目结构
 
-## 运行测试
+```text
+VaultGuard/
+├── main.py                       # 桌面应用入口
+├── cli.py                        # 命令行入口
+├── build_app.sh                  # macOS 构建
+├── build_windows.ps1             # Windows 构建
+├── vaultguard/
+│   ├── core/
+│   │   ├── scanner.py            # 扫描与差异比较
+│   │   ├── executor.py           # 任务执行、断点续传、失败隔离
+│   │   ├── copy_worker.py        # 独立复制进程
+│   │   ├── disk_health.py        # 只读磁盘健康检查
+│   │   ├── database.py           # SQLite 持久化
+│   │   └── service.py            # GUI / CLI 共用服务层
+│   └── ui/
+│       └── app.py                # Flet 桌面界面
+└── tests/
+    └── test_core.py              # 核心自动化测试
+```
+
+## 测试与构建
 
 ```bash
 PYTHONPATH=. .venv/bin/python tests/test_core.py
+git diff --check
 ```
 
-覆盖：原子复制、mtime 回写、增量跳过、更新检测、失败隔离、断点续传、排除规则、只读健康检查、文件内取消、坏盘超时续跑。
+当前核心测试覆盖原子复制、mtime 回写、增量跳过、失败隔离、断点续传、任务队列、坏盘超时、小文件批量落库及历史任务重试。
 
-## 设置项
+构建命令：
 
-mtime 容差、是否对比大小、hash 完整性校验、删除策略（默认关闭）、排除规则、单文件重试次数、异常源盘无进展超时。
+```bash
+./build_app.sh
+.\build_windows.ps1
+```
 
-## 尚未包含
+## 参与贡献
 
-- 打包签名与公证（模块5的安装包）：需 Apple Developer ID / Windows 代码签名证书，请另行提供。
-- 定时自动备份、多备份配置、删除同步回收区（模块6可选增强）。
+- 提交问题前请先搜索 [Issues](https://github.com/FishXIN/VaultGuard/issues)。
+- Bug 报告请附版本、平台、复现步骤和相关日志。
+- 开发规范与提交要求见 [CONTRIBUTING.md](CONTRIBUTING.md)。
+- 一般使用问题见 [SUPPORT.md](SUPPORT.md)。
+- 版本变化见 [CHANGELOG.md](CHANGELOG.md)。
+
+## 路线图
+
+- macOS Intel 与 Windows ARM 构建
+- 代码签名与 macOS 公证
+- 定时备份与多配置管理
+- 更细粒度的速度与故障统计
+- NAS / 网络目标专项优化
+
+## License
+
+[MIT](LICENSE) © FishXIN

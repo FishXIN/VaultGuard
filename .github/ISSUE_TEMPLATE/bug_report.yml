@@ -1,5 +1,5 @@
-name: Bug Report
-description: Report a reproducible defect in VaultGuard
+name: Bug 报告
+description: 报告可以稳定复现的 VaultGuard 缺陷
 title: "[Bug] "
 labels:
   - type: bug
@@ -8,49 +8,77 @@ body:
   - type: markdown
     attributes:
       value: |
-        Thanks for reporting. Please provide a reproducible case and version details.
+        感谢反馈。请先确认正在使用最新版本，并移除日志中的用户名、真实路径或业务内容。
   - type: input
     id: version
     attributes:
-      label: Version
-      description: Which released version is affected?
-      placeholder: v1.2.5
+      label: VaultGuard 版本
+      description: 可在设置页或 Release 文件名中查看
+      placeholder: v1.5.0
     validations:
       required: true
   - type: dropdown
     id: platform
     attributes:
-      label: Platform
+      label: 操作系统
       options:
-        - macOS
-        - Windows
-        - Other
+        - macOS Apple Silicon
+        - macOS Intel
+        - Windows x64
+        - Windows ARM
+        - 其他
     validations:
       required: true
+  - type: input
+    id: system-version
+    attributes:
+      label: 系统版本
+      placeholder: macOS 26.0 / Windows 11 24H2
+    validations:
+      required: true
+  - type: dropdown
+    id: storage
+    attributes:
+      label: 存储类型
+      options:
+        - 内置硬盘
+        - USB 移动硬盘
+        - NAS / 网络目录
+        - 其他
   - type: textarea
     id: steps
     attributes:
-      label: Steps To Reproduce
+      label: 复现步骤
       placeholder: |
-        1. Open Settings
-        2. Toggle ...
-        3. Observe ...
+        1. 选择源目录……
+        2. 选择目标目录……
+        3. 点击……
+        4. 出现……
     validations:
       required: true
   - type: textarea
     id: expected
     attributes:
-      label: Expected Behavior
+      label: 预期行为
     validations:
       required: true
   - type: textarea
     id: actual
     attributes:
-      label: Actual Behavior
+      label: 实际行为
     validations:
       required: true
   - type: textarea
     id: logs
     attributes:
-      label: Logs Or Screenshots
-      description: Paste traceback, logs, or screenshots if available.
+      label: 日志或截图
+      description: 可拖入截图或粘贴日志，请先移除敏感信息
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: 提交前确认
+      options:
+        - label: 我已搜索现有 Issue，没有发现同类问题
+          required: true
+        - label: 我已确认该问题在最新版本中仍可复现
+          required: true

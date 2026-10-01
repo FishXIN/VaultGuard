@@ -1,5 +1,11 @@
 blank_issues_enabled: false
 contact_links:
-  - name: VaultGuard Releases
+  - name: 下载最新版本
     url: https://github.com/FishXIN/VaultGuard/releases
-    about: Check the latest stable release and changelog before filing an issue.
+    about: 提交问题前先确认是否已升级到最新稳定版本。
+  - name: 使用帮助
+    url: https://github.com/FishXIN/VaultGuard/blob/main/SUPPORT.md
+    about: 查看日志位置、反馈前准备和常见支持入口。
+  - name: 安全漏洞
+    url: https://github.com/FishXIN/VaultGuard/security
+    about: 安全问题请私密报告，不要创建公开 Issue。
