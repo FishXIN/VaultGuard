@@ -535,6 +535,7 @@ def test_small_file_results_are_batched():
     ]
     executor = svc.make_executor()
     executor._isolated_copy = False
+    executor._RESULT_BATCH_INTERVAL = 3600
 
     with patch.object(svc.db, "record_item_results",
                       wraps=svc.db.record_item_results) as record, \
