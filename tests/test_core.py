@@ -784,11 +784,17 @@ def test_delete_sync():
     src, dst, data = Path(d)/"s", Path(d)/"t", Path(d)/"data"
     setup_tree(src, {"keep.txt": "k", "stale/old.txt": "x", "stale/sub/deep.bin": b"y"})
     svc = BackupService(data)
+    reports = [
+        DiskHealth("source", str(src), "healthy", smart_status="Verified"),
+        DiskHealth("target", str(dst), "healthy", smart_status="Verified"),
+    ]
 
     # 第一次完整备份，让目标拥有所有文件
     diff = svc.compare(str(src), str(dst))
     tid = svc.create_task(str(src), str(dst), diff)
-    svc.execute(tid, str(src), str(dst))
+    with patch("vaultguard.core.executor.check_backup_disks",
+               return_value=reports):
+        svc.execute(tid, str(src), str(dst))
 
     # 删除源文件，开启 delete_sync 后再次对比
     (src/"stale/old.txt").unlink()
@@ -798,12 +804,14 @@ def test_delete_sync():
 
     diff2 = svc.compare(str(src), str(dst))
     assert diff2.extra_count == 2, f"expected 2 extras, got {diff2.extra_count}"
-    assert {it.rel_path for it in diff2.extra_items} == {
+    assert {Path(it.rel_path).as_posix() for it in diff2.extra_items} == {
         "stale/old.txt", "stale/sub/deep.bin"
     }
 
     tid2 = svc.create_task(str(src), str(dst), diff2)
-    prog, _ = svc.execute(tid2, str(src), str(dst))
+    with patch("vaultguard.core.executor.check_backup_disks",
+               return_value=reports):
+        prog, _ = svc.execute(tid2, str(src), str(dst))
     assert prog.deleted == 2 and prog.failed == 0, \
         f"deleted={prog.deleted} failed={prog.failed}"
     assert not (dst/"stale/old.txt").exists()

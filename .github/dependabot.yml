@@ -8,8 +8,8 @@ updates:
       day: monday
     open-pull-requests-limit: 5
     labels:
-      - type: chore
-      - area: release
+      - "type: chore"
+      - "area: release"
 
   - package-ecosystem: github-actions
     directory: /
@@ -18,5 +18,5 @@ updates:
       day: monday
     open-pull-requests-limit: 5
     labels:
-      - type: chore
-      - area: release
+      - "type: chore"
+      - "area: release"
